@@ -1,5 +1,10 @@
 # Choices
 
+## 2026-09-14
+
+- **Gemini Apps to prod:** Chrome cookies, not Google OAuth. Decrypt local Chromium `v10`/`v11` only; Windows DPAPI/`v20` loud error. Cookie values never logged (names/host counts only; `SID`/`SAPISID`/PSID redacted in HTTP logs). Off by default (`#838`). Override: `GEMINI_COOKIE`. HTTP `http1Only` + IPv4 bind for gemini.google.com. Do not port Grok.com (`grok-web` / `GROK_COOKIE` / `bodyBase64`).
+- **Gemini logo:** official four-color spark. SVGs without `currentColor` render as `<img>`. Progress/tray accent `#3186FF`.
+
 ## 2026-09-02
 
 - **Tray provider pick:** Classic follows the open sidebar provider. Modern may use pin focus / first pinned. Do not apply Modern pin focus on Classic (it froze the logo on one plugin).

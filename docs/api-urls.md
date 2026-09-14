@@ -105,6 +105,15 @@ Quick copy-paste list: `./scripts/print-cursor-endpoints.sh`
 | `PROJECTS_URL` | `plugins/gemini/plugin.js` | `https://cloudresourcemanager.googleapis.com/v1/projects` | GCP projects |
 | `TOKEN_URL` | `plugins/gemini/plugin.js` | `https://oauth2.googleapis.com/token` | OAuth token |
 
+### gemini-apps
+
+| Symbol / role | File | URL | Purpose |
+|---------------|------|-----|---------|
+| `APP_URL` | `plugins/gemini-apps/plugin.js` | `https://gemini.google.com/app` | HTML for `SNlM0e` / `cfb2h` / `FdrFJe` |
+| `USAGE_URL` | `plugins/gemini-apps/plugin.js` | `https://gemini.google.com/usage` | Fallback token page |
+| `BATCH_URL` | `plugins/gemini-apps/plugin.js` | `https://gemini.google.com/_/BardChatUi/data/batchexecute` | Usage RPC `jSf9Qc` + optional plan `sJBwce` |
+| `ORIGIN` | `plugins/gemini-apps/plugin.js` | `https://gemini.google.com` | Origin / SAPISIDHASH |
+
 ### kimi
 
 | Symbol / role | File | URL | Purpose |

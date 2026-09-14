@@ -233,6 +233,12 @@ fn run_probe_with_account_timeout(
             }
             return error_output(plugin, "fireworks wrapper patch failed".to_string());
         }
+        if host_api::patch_chromium_cookies_wrapper(&ctx).is_err() {
+            if deadline.has_elapsed() {
+                return error_output(plugin, timeout_message.clone());
+            }
+            return error_output(plugin, "chromiumCookies wrapper patch failed".to_string());
+        }
         if host_api::inject_utils(&ctx).is_err() {
             if deadline.has_elapsed() {
                 return error_output(plugin, timeout_message.clone());
@@ -367,6 +373,8 @@ pub fn run_plugin_action(
         )
         .map_err(|_| "host api injection failed".to_string())?;
         host_api::patch_http_wrapper(&ctx).map_err(|_| "http wrapper failed".to_string())?;
+        host_api::patch_chromium_cookies_wrapper(&ctx)
+            .map_err(|_| "chromiumCookies wrapper failed".to_string())?;
         host_api::inject_utils(&ctx).map_err(|_| "utils injection failed".to_string())?;
         ctx.eval::<(), _>(entry_script.as_bytes())
             .map_err(|_| "script eval failed".to_string())?;

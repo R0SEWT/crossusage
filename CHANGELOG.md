@@ -2,6 +2,12 @@
 
 **CrossUsage** ships **1.x** releases from [github.com/barramee27/crossusage](https://github.com/barramee27/crossusage). Older **0.6.x** sections below are **archived OpenUsage upstream** notes, not CrossUsage release numbers.
 
+## Unreleased
+
+### New features
+
+- **Gemini Apps** — Current and Weekly usage from [gemini.google.com](https://gemini.google.com/usage) via Chrome cookies or `GEMINI_COOKIE`. Off by default. Not Antigravity / Gemini CLI quota.
+
 ## 1.4.4
 
 **Theme:** Tray style switching and Classic vs Modern logo pick.
