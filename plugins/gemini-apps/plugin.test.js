@@ -16,8 +16,19 @@ const COOKIES = {
 const USAGE_HTML = `
   <html>
     <script>window.WIZ_global_data = {"SNlM0e":"at-token","cfb2h":"boq_test","FdrFJe":"99"};</script>
-    <div>PRO</div>
+    <div>Upgrade to Pro. Gemini 2.5 Pro. Try Ultra.</div>
   </html>
+`
+
+function planRpc(label) {
+  return `)]}'
+[["wrb.fr","sJBwce","[\\"${label}\\"]",null,null,null,"generic"]]
+`
+}
+
+const PLAN_RPC_PRO = planRpc("Pro")
+const PLAN_RPC_EMPTY = `)]}'
+[["wrb.fr","sJBwce","[]",null,null,null,"generic"]]
 `
 
 const USAGE_RPC = `)]}'
@@ -36,7 +47,7 @@ function mockChromeCookies(ctx, map = COOKIES) {
   ctx.host.chromiumCookies.read.mockReturnValue(map)
 }
 
-function mockGeminiHttp(ctx, { html = USAGE_HTML, rpc = USAGE_RPC } = {}) {
+function mockGeminiHttp(ctx, { html = USAGE_HTML, rpc = USAGE_RPC, plan = PLAN_RPC_PRO } = {}) {
   ctx.host.http.request.mockImplementation((opts) => {
     if (String(opts.url).startsWith("https://gemini.google.com/app") || String(opts.url).startsWith("https://gemini.google.com/usage")) {
       expect(opts.headers.Cookie).toContain("__Secure-1PSID=psid-value")
@@ -51,7 +62,10 @@ function mockGeminiHttp(ctx, { html = USAGE_HTML, rpc = USAGE_RPC } = {}) {
       if (String(opts.url).includes("rpcids=jSf9Qc")) {
         return { status: 200, bodyText: rpc }
       }
-      return { status: 200, bodyText: `)]}'\n[["wrb.fr","sJBwce","[]",null,null,null,"generic"]]` }
+      if (String(opts.url).includes("rpcids=sJBwce")) {
+        return { status: 200, bodyText: plan }
+      }
+      throw new Error("unexpected batchexecute " + opts.url)
     }
     throw new Error("unexpected url " + opts.url)
   })
@@ -134,5 +148,60 @@ describe("gemini-apps plugin", () => {
     }))
     const plugin = await loadPlugin()
     expect(() => plugin.probe(ctx)).toThrow(/session expired/)
+  })
+
+  it("prefers sJBwce over HTML upsell copy for the plan label", async () => {
+    const ctx = makeCtx()
+    mockChromeCookies(ctx)
+    mockGeminiHttp(ctx, { plan: planRpc("Free") })
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+    expect(result.plan).toBe("Free")
+  })
+
+  it("does not treat HTML Pro/Ultra marketing text as a plan", async () => {
+    const ctx = makeCtx()
+    mockChromeCookies(ctx)
+    mockGeminiHttp(ctx, { plan: PLAN_RPC_EMPTY })
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+    expect(result.plan).toBeUndefined()
+  })
+
+  it("uses Ultra from sJBwce even when HTML mentions Pro first", async () => {
+    const ctx = makeCtx()
+    mockChromeCookies(ctx)
+    mockGeminiHttp(ctx, { plan: planRpc("Ultra") })
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+    expect(result.plan).toBe("Ultra")
+  })
+
+  it("falls back to GEMINI_COOKIE when Chrome cookies are only a partial session", async () => {
+    const ctx = makeCtx()
+    mockChromeCookies(ctx, { SID: "sid-only" })
+    ctx.host.env.get.mockImplementation((name) =>
+      name === "GEMINI_COOKIE"
+        ? "SAPISID=sapisid-value; __Secure-1PSID=psid-value"
+        : null,
+    )
+    mockGeminiHttp(ctx)
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+    expect(result.lines.find((line) => line.label === "Source").value).toBe("GEMINI_COOKIE")
+  })
+
+  it("falls back to GEMINI_COOKIE when Chrome has PSID but no SAPISID", async () => {
+    const ctx = makeCtx()
+    mockChromeCookies(ctx, { SID: "sid-value", "__Secure-1PSID": "stale-psid" })
+    ctx.host.env.get.mockImplementation((name) =>
+      name === "GEMINI_COOKIE"
+        ? "SAPISID=sapisid-value; __Secure-1PSID=psid-value"
+        : null,
+    )
+    mockGeminiHttp(ctx)
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+    expect(result.lines.find((line) => line.label === "Source").value).toBe("GEMINI_COOKIE")
   })
 })

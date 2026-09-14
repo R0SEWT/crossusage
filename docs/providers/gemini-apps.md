@@ -35,7 +35,7 @@ You must be logged into [gemini.google.com](https://gemini.google.com/app) in th
 |-----|-----|
 | `jSf9Qc` row type `1` | Current percent + `resetsAt` |
 | `jSf9Qc` row type `2` | Weekly percent + `resetsAt` |
-| Usage HTML / optional `sJBwce` | Plan (`Pro` / `Ultra`) when present |
+| `sJBwce` | Plan (`Pro` / `Ultra` / `Free`) when present |
 
 `GET /app` (fallback `/usage`) also supplies the `SNlM0e` (`at`), `cfb2h` (`bl`), and `FdrFJe` (`f.sid`) tokens required by batchexecute.
 

@@ -35,7 +35,9 @@ struct DerivedKey {
     bytes: [u8; KEY_LEN],
 }
 
-pub fn read_chromium_cookies(opts: &ChromiumCookiesReadOpts) -> Result<HashMap<String, String>, String> {
+pub fn read_chromium_cookies(
+    opts: &ChromiumCookiesReadOpts,
+) -> Result<HashMap<String, String>, String> {
     if opts.names.is_empty() {
         return Err("chromiumCookies.read requires names".to_string());
     }
@@ -59,29 +61,30 @@ pub fn read_chromium_cookies(opts: &ChromiumCookiesReadOpts) -> Result<HashMap<S
             return Ok(HashMap::new());
         }
 
-        let mut found = HashMap::new();
+        let mut profiles = Vec::new();
         let mut v20_seen = false;
         let mut v12_seen = false;
         for db in &dbs {
             match read_cookies_from_db(db, &opts.hosts, &opts.names, &keys) {
                 Ok(partial) => {
-                    for (name, value) in partial {
-                        found.entry(name).or_insert(value);
+                    if partial.is_empty() {
+                        continue;
+                    }
+                    let complete = opts.names.iter().all(|n| partial.contains_key(n));
+                    profiles.push(partial);
+                    if complete {
+                        break;
                     }
                 }
                 Err(err) if err.contains("v20") => v20_seen = true,
                 Err(err) if err.contains("v12") => v12_seen = true,
                 Err(_) => {}
             }
-            if opts.names.iter().all(|n| found.contains_key(n)) {
-                break;
-            }
         }
 
+        let found = pick_single_profile_cookies(profiles, &opts.names);
         if found.is_empty() && v20_seen {
-            return Err(
-                "Chrome cookie encryption v20 (app-bound) is not supported".to_string(),
-            );
+            return Err("Chrome cookie encryption v20 (app-bound) is not supported".to_string());
         }
         if found.is_empty() && v12_seen {
             return Err(
@@ -220,6 +223,24 @@ fn macos_safe_storage_password(service: &str) -> Result<String, String> {
     Ok(password)
 }
 
+/// One Chromium profile at a time. Never stitch cookie names across DBs.
+#[cfg(any(test, not(windows)))]
+fn pick_single_profile_cookies(
+    profiles: impl IntoIterator<Item = HashMap<String, String>>,
+    names: &[String],
+) -> HashMap<String, String> {
+    let mut best = HashMap::new();
+    for partial in profiles {
+        if names.iter().all(|n| partial.contains_key(n)) {
+            return partial;
+        }
+        if partial.len() > best.len() {
+            best = partial;
+        }
+    }
+    best
+}
+
 fn cookie_db_candidates() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(home) = dirs::home_dir() {
@@ -263,10 +284,7 @@ fn cookie_db_candidates() -> Vec<PathBuf> {
             if !path.is_dir() {
                 continue;
             }
-            let name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
             if name != "Default" && !name.starts_with("Profile ") {
                 continue;
             }
@@ -297,7 +315,9 @@ fn copy_db_for_read(src: &Path) -> Result<PathBuf, String> {
         if wal_src.is_file() {
             let wal_dst = tmp.with_file_name(format!(
                 "{}-wal",
-                tmp.file_name().and_then(|s| s.to_str()).unwrap_or("Cookies")
+                tmp.file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Cookies")
             ));
             let _ = fs::copy(&wal_src, wal_dst);
         }
@@ -404,7 +424,9 @@ fn decrypt_cookie_value(
             return Err("Chrome cookie encryption v20 (app-bound) is not supported".to_string());
         }
         if prefix == b"v12" {
-            return Err("Chrome cookie encryption v12 (Secret Portal) is not supported".to_string());
+            return Err(
+                "Chrome cookie encryption v12 (Secret Portal) is not supported".to_string(),
+            );
         }
         if prefix == b"v10" || prefix == b"v11" {
             let ciphertext = &encrypted[3..];
@@ -452,8 +474,8 @@ fn encrypt_v10_peanuts(plaintext: &[u8]) -> Vec<u8> {
     use aes::cipher::BlockEncryptMut;
     type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
     let key = derive_key(LINUX_V10_PASSWORD, LINUX_ITERATIONS);
-    let ciphertext = Aes128CbcEnc::new(&key.bytes.into(), &IV.into())
-        .encrypt_padded_vec_mut::<Pkcs7>(plaintext);
+    let ciphertext =
+        Aes128CbcEnc::new(&key.bytes.into(), &IV.into()).encrypt_padded_vec_mut::<Pkcs7>(plaintext);
     let mut out = b"v10".to_vec();
     out.extend_from_slice(&ciphertext);
     out
@@ -538,5 +560,56 @@ mod tests {
             Some("session-from-sqlite")
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pick_single_profile_does_not_stitch_cookie_names() {
+        let names = vec!["__Secure-1PSID".into(), "SAPISID".into()];
+        let mut first = HashMap::new();
+        first.insert("__Secure-1PSID".into(), "profile-a-psid".into());
+        let mut second = HashMap::new();
+        second.insert("SAPISID".into(), "profile-b-sapisid".into());
+        let picked = pick_single_profile_cookies([first, second], &names);
+        assert_eq!(
+            picked.get("__Secure-1PSID").map(String::as_str),
+            Some("profile-a-psid")
+        );
+        assert!(picked.get("SAPISID").is_none());
+    }
+
+    #[test]
+    fn pick_single_profile_prefers_complete_later_db() {
+        let names = vec!["__Secure-1PSID".into(), "SAPISID".into()];
+        let mut first = HashMap::new();
+        first.insert("__Secure-1PSID".into(), "stale-psid".into());
+        let mut second = HashMap::new();
+        second.insert("__Secure-1PSID".into(), "fresh-psid".into());
+        second.insert("SAPISID".into(), "fresh-sapisid".into());
+        let picked = pick_single_profile_cookies([first, second], &names);
+        assert_eq!(
+            picked.get("__Secure-1PSID").map(String::as_str),
+            Some("fresh-psid")
+        );
+        assert_eq!(
+            picked.get("SAPISID").map(String::as_str),
+            Some("fresh-sapisid")
+        );
+    }
+
+    #[test]
+    fn pick_single_profile_keeps_first_complete() {
+        let names = vec!["__Secure-1PSID".into(), "SAPISID".into()];
+        let mut first = HashMap::new();
+        first.insert("__Secure-1PSID".into(), "a-psid".into());
+        first.insert("SAPISID".into(), "a-sapisid".into());
+        let mut second = HashMap::new();
+        second.insert("__Secure-1PSID".into(), "b-psid".into());
+        second.insert("SAPISID".into(), "b-sapisid".into());
+        let picked = pick_single_profile_cookies([first, second], &names);
+        assert_eq!(
+            picked.get("__Secure-1PSID").map(String::as_str),
+            Some("a-psid")
+        );
+        assert_eq!(picked.get("SAPISID").map(String::as_str), Some("a-sapisid"));
     }
 }

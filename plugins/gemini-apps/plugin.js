@@ -53,15 +53,20 @@
     return Object.keys(map).length > 0 ? map : null
   }
 
+  function hasGeminiSession(map) {
+    if (!map || typeof map !== "object") return false
+    const hasPsid = readString(map["__Secure-1PSID"])
+    const hasSapisid = readString(map.SAPISID) || readString(map["__Secure-1PAPISID"])
+    return !!(hasPsid && hasSapisid)
+  }
+
   function readChromeCookies(ctx) {
     if (!ctx.host.chromiumCookies || typeof ctx.host.chromiumCookies.read !== "function") {
       return null
     }
     try {
       const map = ctx.host.chromiumCookies.read({ hosts: COOKIE_HOSTS, names: COOKIE_NAMES })
-      if (!map || typeof map !== "object") return null
-      const hasSession = readString(map["__Secure-1PSID"]) || readString(map.SID)
-      if (!hasSession) return null
+      if (!hasGeminiSession(map)) return null
       return map
     } catch (e) {
       ctx.host.log.warn("chromium cookie read failed: " + String(e))
@@ -160,11 +165,11 @@
     return false
   }
 
-  function parsePlan(html) {
-    const text = String(html || "")
-    if (/\bPRO\b/.test(text) || /\bPro\b/.test(text)) return "Pro"
-    if (/\bUltra\b/i.test(text)) return "Ultra"
-    if (/\bFree\b/i.test(text)) return "Free"
+  function parsePlan(text) {
+    const s = String(text || "")
+    if (/\bUltra\b/i.test(s)) return "Ultra"
+    if (/\bPRO\b/.test(s) || /\bPro\b/.test(s)) return "Pro"
+    if (/\bFree\b/i.test(s)) return "Free"
     return null
   }
 
@@ -396,9 +401,7 @@
       throw "Gemini Apps auth missing. Log into gemini.google.com in Chrome."
     }
     ctx.host.log.info("cookie names=" + Object.keys(cookies.map).sort().join(","))
-    const hasPsid = readString(cookies.map["__Secure-1PSID"])
-    const hasSapisid = readString(cookies.map.SAPISID) || readString(cookies.map["__Secure-1PAPISID"])
-    if (!hasPsid || !hasSapisid) {
+    if (!hasGeminiSession(cookies.map)) {
       throw "Gemini Apps auth missing. Log into gemini.google.com in Chrome."
     }
 
@@ -407,12 +410,11 @@
     const usage = parseUsagePayload(payload)
     if (!usage) throw "Could not parse Gemini Apps usage."
 
-    let plan = parsePlan(page.html)
+    let plan = null
     try {
       const planPayload = batchExecute(ctx, cookies, page.meta, RPC_PLAN, "[]")
       if (planPayload != null) {
-        const fromRpc = parsePlan(JSON.stringify(planPayload))
-        if (fromRpc && !plan) plan = fromRpc
+        plan = parsePlan(JSON.stringify(planPayload))
       }
     } catch (e) {
       ctx.host.log.warn("plan RPC skipped: " + String(e))
