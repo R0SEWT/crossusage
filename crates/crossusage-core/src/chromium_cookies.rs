@@ -241,6 +241,16 @@ fn pick_single_profile_cookies(
     best
 }
 
+/// Prefer live `Network/Cookies` (Chrome M88+). Skip the unmaintained profile-root leftover.
+fn cookie_db_for_profile(profile_dir: &Path) -> Option<PathBuf> {
+    let network = profile_dir.join("Network").join("Cookies");
+    if network.is_file() {
+        return Some(network);
+    }
+    let leftover = profile_dir.join("Cookies");
+    leftover.is_file().then_some(leftover)
+}
+
 fn cookie_db_candidates() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(home) = dirs::home_dir() {
@@ -288,11 +298,8 @@ fn cookie_db_candidates() -> Vec<PathBuf> {
             if name != "Default" && !name.starts_with("Profile ") {
                 continue;
             }
-            for rel in ["Network/Cookies", "Cookies"] {
-                let db = path.join(rel);
-                if db.is_file() {
-                    dbs.push(db);
-                }
+            if let Some(db) = cookie_db_for_profile(&path) {
+                dbs.push(db);
             }
         }
     }
@@ -611,5 +618,34 @@ mod tests {
             Some("a-psid")
         );
         assert_eq!(picked.get("SAPISID").map(String::as_str), Some("a-sapisid"));
+    }
+
+    #[test]
+    fn cookie_db_for_profile_prefers_live_network_over_leftover() {
+        let dir = std::env::temp_dir().join(format!(
+            "crossusage-chrome-cookie-network-vs-leftover-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("Network")).expect("temp dir");
+        fs::write(dir.join("Network").join("Cookies"), b"live").expect("live db");
+        fs::write(dir.join("Cookies"), b"stale").expect("leftover db");
+        let picked = cookie_db_for_profile(&dir).expect("db");
+        assert_eq!(picked, dir.join("Network").join("Cookies"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cookie_db_for_profile_uses_leftover_when_network_missing() {
+        let dir = std::env::temp_dir().join(format!(
+            "crossusage-chrome-cookie-leftover-only-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("temp dir");
+        fs::write(dir.join("Cookies"), b"legacy").expect("leftover db");
+        let picked = cookie_db_for_profile(&dir).expect("db");
+        assert_eq!(picked, dir.join("Cookies"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
