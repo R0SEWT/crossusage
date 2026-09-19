@@ -83,4 +83,29 @@ describe("buildUsageInsights", () => {
     })
     expect(rows.some((r) => r.kind === "tight" && r.message.includes("5%"))).toBe(true)
   })
+
+  it("does not flag healthy quotas (>25% remaining) as tight", () => {
+    const rows = buildUsageInsights({
+      plugins: [
+        plugin({
+          data: {
+            providerId: "cursor",
+            displayName: "Cursor",
+            iconUrl: "",
+            lines: [
+              {
+                type: "progress",
+                label: "Total usage",
+                used: 7,
+                limit: 100,
+                format: { kind: "percent" },
+              },
+            ],
+          },
+        }),
+      ],
+      pluginSettings: { order: ["cursor"], disabled: [] },
+    })
+    expect(rows.some((r) => r.kind === "tight")).toBe(false)
+  })
 })

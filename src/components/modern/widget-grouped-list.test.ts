@@ -26,7 +26,8 @@ describe("buildProviderWidgetGroups", () => {
 
     expect(groups).toHaveLength(1)
     expect(groups[0]?.pluginId).toBe("cursor:work")
-    expect(groups[0]?.name).toBe("Cursor (Work)")
+    expect(groups[0]?.name).toBe("Cursor")
+    expect(groups[0]?.instanceLabel).toBe("Work")
     expect(groups[0]?.metrics).toHaveLength(1)
   })
 })

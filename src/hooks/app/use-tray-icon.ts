@@ -396,7 +396,7 @@ export function useTrayIcon({
             preferWeeklyLimit: preferMenubarWeeklyLimitRef.current,
           })
         : null
-      const tooltipBody = insightLine ? `${insightLine}\n\n${baseTooltip}` : baseTooltip
+      const tooltipBody = insightLine ? `${baseTooltip}\n\n${insightLine}` : baseTooltip
       const issuesLine = formatTrayIssuesAppendage({
         pluginsMeta: pluginsMetaRef.current,
         pluginSettings: currentSettings,

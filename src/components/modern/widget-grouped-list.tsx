@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 export type ProviderWidgetGroup = {
   pluginId: string
   name: string
+  instanceLabel?: string
   iconUrl?: string
   brandColor?: string
   metrics: WidgetData[]
@@ -66,7 +67,7 @@ function ProviderCard({
 
   return (
     <section
-      className="rounded-lg border bg-card/80 overflow-hidden motion-card"
+      className="rounded-xl border bg-card/85 overflow-hidden motion-card shadow-xs"
       style={{
         ["--i" as string]: index,
         ...(group.brandColor ? { borderColor: `${group.brandColor}33` } : {}),
@@ -74,23 +75,30 @@ function ProviderCard({
     >
       <header
         className={cn(
-          "flex items-center gap-2 px-3 border-b border-border/60",
+          "flex items-center gap-2 px-3 border-b border-border/50 bg-muted/20",
           compact ? "py-1.5" : "py-2",
-          onFocusProvider ? "cursor-pointer hover:bg-muted/40" : "",
+          onFocusProvider ? "cursor-pointer hover:bg-muted/40 transition-colors" : "",
         )}
         onClick={onFocusProvider ? () => onFocusProvider(group.pluginId) : undefined}
       >
         {group.iconUrl ? (
-          <img src={group.iconUrl} alt="" className="h-4 w-4 shrink-0" />
+          <img src={group.iconUrl} alt="" className="h-4 w-4 shrink-0 rounded-xs" />
         ) : (
           <span
-            className="h-4 w-4 rounded-sm shrink-0 bg-muted"
+            className="h-4 w-4 rounded-xs shrink-0 bg-muted"
             style={group.brandColor ? { backgroundColor: group.brandColor } : undefined}
           />
         )}
-        <h3 className={cn("font-semibold truncate motion-title", compact ? "text-sm" : "text-base")}>
-          {group.name}
-        </h3>
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          <h3 className={cn("font-semibold truncate motion-title", compact ? "text-sm" : "text-base")}>
+            {group.name}
+          </h3>
+          {group.instanceLabel ? (
+            <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border/60 shrink-0 truncate max-w-[180px]">
+              {group.instanceLabel}
+            </span>
+          ) : null}
+        </div>
       </header>
       <div className={cn("px-3", compact ? "py-1" : "py-2")}>
         {bounded.map((m) => (
@@ -103,7 +111,7 @@ function ProviderCard({
           <div
             className={cn(
               bounded.length > 0 || charts.length > 0
-                ? "mt-1 pt-1 border-t border-border/50"
+                ? "mt-1.5 pt-1.5 border-t border-border/50"
                 : "",
               "space-y-0",
             )}
@@ -174,9 +182,14 @@ export function buildProviderWidgetGroups(args: {
         metrics.push(data)
       }
       if (metrics.length === 0) return null
+      let name = meta.name
+      if (meta.instanceLabel && name.endsWith(` (${meta.instanceLabel})`)) {
+        name = name.slice(0, -(meta.instanceLabel.length + 3))
+      }
       return {
         pluginId,
-        name: meta.name,
+        name,
+        instanceLabel: meta.instanceLabel,
         iconUrl: meta.iconUrl,
         brandColor: meta.brandColor,
         metrics,

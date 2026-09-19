@@ -22,7 +22,37 @@ use crate::panel::toggle_panel;
 use crate::panel::get_or_init_panel;
 
 #[cfg(target_os = "linux")]
-static TRAY_USAGE_SUMMARY_ITEM: OnceLock<Mutex<MenuItem<Wry>>> = OnceLock::new();
+pub struct TrayMenuItems {
+    pub app_handle: AppHandle,
+    pub sep_usage: tauri::menu::PredefinedMenuItem<Wry>,
+    pub show_stats: MenuItem<Wry>,
+    pub go_to_settings: MenuItem<Wry>,
+    pub log_level_submenu: tauri::menu::Submenu<Wry>,
+    pub separator: tauri::menu::PredefinedMenuItem<Wry>,
+    pub restart: MenuItem<Wry>,
+    pub about: MenuItem<Wry>,
+    pub quit: MenuItem<Wry>,
+}
+
+#[cfg(target_os = "linux")]
+pub static LINUX_TRAY_MENU_ITEMS: OnceLock<TrayMenuItems> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+struct TrayUsageSummaryState {
+    items: Vec<MenuItem<Wry>>,
+    current_line_count: usize,
+}
+
+#[cfg(target_os = "linux")]
+static TRAY_USAGE_SUMMARY_STATE: OnceLock<Mutex<TrayUsageSummaryState>> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+fn store_tray_usage_summary_state(items: Vec<MenuItem<Wry>>, current_line_count: usize) {
+    let _ = TRAY_USAGE_SUMMARY_STATE.set(Mutex::new(TrayUsageSummaryState {
+        items,
+        current_line_count,
+    }));
+}
 
 static TRAY_RESTART_ITEM: OnceLock<Mutex<MenuItem<Wry>>> = OnceLock::new();
 
@@ -45,24 +75,22 @@ pub fn set_tray_restart_menu_text(text: &str) {
 #[cfg(target_os = "linux")]
 const TRAY_USAGE_SUMMARY_MAX_LINES: usize = 12;
 
-/// Linux AppIndicator: native tray tooltips are unreliable. We mirror the same text in one
-/// disabled menu row using embedded newlines (GTK allocates one item, not N blank rows).
-#[cfg(target_os = "linux")]
-fn store_tray_usage_summary_handle(item: MenuItem<Wry>) {
-    let _ = TRAY_USAGE_SUMMARY_ITEM.set(Mutex::new(item));
-}
-
-/// Update the disabled “usage summary” item on Linux. No-op on other platforms.
+/// Update the disabled “usage summary” items on Linux. No-op on other platforms.
 pub fn update_tray_usage_summary(summary: &str) {
     #[cfg(not(target_os = "linux"))]
     let _ = summary;
 
     #[cfg(target_os = "linux")]
     {
-        let Some(lock) = TRAY_USAGE_SUMMARY_ITEM.get() else {
+        use tauri::menu::{IsMenuItem, Menu};
+
+        let Some(ctx) = LINUX_TRAY_MENU_ITEMS.get() else {
             return;
         };
-        let Ok(item) = lock.lock() else {
+        let Some(state_lock) = TRAY_USAGE_SUMMARY_STATE.get() else {
+            return;
+        };
+        let Ok(mut state) = state_lock.lock() else {
             return;
         };
 
@@ -86,8 +114,38 @@ pub fn update_tray_usage_summary(summary: &str) {
             lines.truncate(TRAY_USAGE_SUMMARY_MAX_LINES);
         }
 
-        let joined = lines.join("\n");
-        let _ = item.set_text(&joined);
+        let new_count = lines.len();
+
+        // Update text on stored items in place
+        for (i, line) in lines.iter().enumerate() {
+            if i < state.items.len() {
+                let _ = state.items[i].set_text(line);
+            }
+        }
+
+        // Rebuild the menu only when the line count changes
+        if new_count != state.current_line_count {
+            let mut items: Vec<&dyn IsMenuItem<Wry>> = Vec::new();
+            for item in &state.items[..new_count] {
+                items.push(item);
+            }
+
+            items.push(&ctx.sep_usage);
+            items.push(&ctx.show_stats);
+            items.push(&ctx.go_to_settings);
+            items.push(&ctx.log_level_submenu);
+            items.push(&ctx.separator);
+            items.push(&ctx.restart);
+            items.push(&ctx.about);
+            items.push(&ctx.quit);
+
+            if let Ok(new_menu) = Menu::with_items(&ctx.app_handle, &items) {
+                if let Some(tray) = ctx.app_handle.tray_by_id("tray") {
+                    let _ = tray.set_menu(Some(new_menu));
+                }
+            }
+            state.current_line_count = new_count;
+        }
     }
 }
 
@@ -274,19 +332,38 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
 
     #[cfg(target_os = "linux")]
     let menu = {
-        let usage_summary = MenuItem::with_id(
-            app_handle,
-            "tray_usage_summary",
-            "CrossUsage",
-            false,
-            None::<&str>,
-        )?;
-        store_tray_usage_summary_handle(usage_summary.clone());
         let sep_usage = PredefinedMenuItem::separator(app_handle)?;
+
+        let _ = LINUX_TRAY_MENU_ITEMS.set(TrayMenuItems {
+            app_handle: app_handle.clone(),
+            sep_usage: sep_usage.clone(),
+            show_stats: show_stats.clone(),
+            go_to_settings: go_to_settings.clone(),
+            log_level_submenu: log_level_submenu.clone(),
+            separator: separator.clone(),
+            restart: restart.clone(),
+            about: about.clone(),
+            quit: quit.clone(),
+        });
+
+        let mut summary_items = Vec::with_capacity(TRAY_USAGE_SUMMARY_MAX_LINES);
+        for i in 0..TRAY_USAGE_SUMMARY_MAX_LINES {
+            let item = MenuItem::with_id(
+                app_handle,
+                format!("tray_usage_summary_{}", i),
+                if i == 0 { "CrossUsage" } else { "" },
+                false,
+                None::<&str>,
+            )?;
+            summary_items.push(item);
+        }
+
+        store_tray_usage_summary_state(summary_items.clone(), 1);
+
         Menu::with_items(
             app_handle,
             &[
-                &usage_summary,
+                &summary_items[0],
                 &sep_usage,
                 &show_stats,
                 &go_to_settings,
@@ -298,6 +375,7 @@ pub fn create(app_handle: &AppHandle) -> tauri::Result<()> {
             ],
         )?
     };
+
 
     #[cfg(not(target_os = "linux"))]
     let menu = Menu::with_items(
