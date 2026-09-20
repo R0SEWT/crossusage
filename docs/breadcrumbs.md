@@ -1,5 +1,10 @@
 # Breadcrumbs
 
+## 2026-09-14
+
+- Gemini Apps: keep cookies from one Chromium profile; require PSID+SAPISID before skipping `GEMINI_COOKIE`; plan label from `sJBwce` only.
+- Ported lab `gemini-apps` onto `feat/gemini-apps` from `origin/feat/linux-windows-native-support` (1.4.4). Host: `chromium_cookies.rs`, `GEMINI_COOKIE`, `http1Only`, Google cookie redaction, `sha1Hex`. Grok.com stays lab.
+
 ## 2026-09-02
 
 - Tray readout (provider + meter, portal to `document.body`) + Classic vs Modern tray provider pick + mid-fill style previews. Lab Gemini Apps / Grok.com stay off this branch. Apply keeps other `trayLines` meters; Modern pin-sync does not clobber tray focus. Confirming an already-pinned only meter does not `unshift` it (other providers stay put).

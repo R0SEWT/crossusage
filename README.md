@@ -79,6 +79,7 @@ Linux **CLI-only** without a desktop package: add `INSTALL_MODE=cli` to the firs
 | DeepSeek | [deepseek](docs/providers/deepseek.md) |
 | Factory / Droid | [factory](docs/providers/factory.md) |
 | Fireworks AI | [fireworks-ai](docs/providers/fireworks-ai.md) |
+| Gemini Apps | [gemini-apps](docs/providers/gemini-apps.md) |
 | Grok | [grok](docs/providers/grok.md) |
 | JetBrains AI Assistant | [jetbrains-ai-assistant](docs/providers/jetbrains-ai-assistant.md) |
 | Kiro | [kiro](docs/providers/kiro.md) |

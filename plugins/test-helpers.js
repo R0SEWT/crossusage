@@ -88,10 +88,14 @@ export const makeCtx = () => {
           return `${iv.toString("base64")}:${tag.toString("base64")}:${ciphertext.toString("base64")}`
         }),
         sha256Hex: vi.fn((text) => crypto.createHash("sha256").update(String(text)).digest("hex")),
+        sha1Hex: vi.fn((text) => crypto.createHash("sha1").update(String(text)).digest("hex")),
       },
       sqlite: {
         query: vi.fn(() => "[]"),
         exec: vi.fn(),
+      },
+      chromiumCookies: {
+        read: vi.fn(() => ({})),
       },
       http: {
         request: vi.fn(),

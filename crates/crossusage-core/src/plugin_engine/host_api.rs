@@ -8,6 +8,7 @@ use crate::provider_accounts::{self, ProviderAccountContext, ProviderCredential}
 use rquickjs::{function::Rest, Ctx, Exception, Function, Object};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Map, Value as JsonValue};
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
@@ -64,7 +65,7 @@ fn log_probe_deadline_skip(plugin_id: &str, operation: &str) {
     );
 }
 
-const WHITELISTED_ENV_VARS: [&str; 26] = [
+const WHITELISTED_ENV_VARS: [&str; 27] = [
     "CODEX_HOME",
     "CLAUDE_CONFIG_DIR",
     "CLAUDE_CODE_OAUTH_TOKEN",
@@ -89,6 +90,7 @@ const WHITELISTED_ENV_VARS: [&str; 26] = [
     "OLLAMA_HOST",
     "OLLAMA_SESSION_COOKIE",
     "OLLAMA_COOKIE",
+    "GEMINI_COOKIE",
     "NEURALWATT_API_KEY",
     "FIREWORKS_API_KEY",
 ];
@@ -348,6 +350,9 @@ fn redact_url(url: &str) -> String {
         "profile_arn",
         "email",
         "login",
+        "cookie",
+        "sid",
+        "sapisid",
     ];
 
     let url = account_path_pattern
@@ -382,9 +387,24 @@ fn redact_url(url: &str) -> String {
     }
 }
 
+fn redact_google_cookie_pairs(text: &str) -> String {
+    static COOKIE_PAIR_RE: OnceLock<regex_lite::Regex> = OnceLock::new();
+    let cookie_pair_re = COOKIE_PAIR_RE.get_or_init(|| {
+        regex_lite::Regex::new(
+            r"(?i)(__Secure-1PSIDTS|__Secure-1PAPISID|__Secure-3PSID|__Secure-1PSID|SAPISID|APISID|HSID|SSID|SIDCC|NID|SID)=([^\s;]+)",
+        )
+        .expect("valid google cookie pair regex")
+    });
+    cookie_pair_re
+        .replace_all(text, |caps: &regex_lite::Captures| {
+            format!("{}={}", &caps[1], redact_value(&caps[2]))
+        })
+        .into_owned()
+}
+
 /// Redact sensitive patterns in response body for logging
 fn redact_body(body: &str) -> String {
-    let mut result = body.to_string();
+    let mut result = redact_google_cookie_pairs(body);
 
     // Redact JWTs (eyJ... pattern with dots)
     let jwt_pattern =
@@ -490,7 +510,7 @@ fn redact_body(body: &str) -> String {
 
 /// Lightweight redaction for plugin log messages (JWT + API key patterns only).
 fn redact_log_message(msg: &str) -> String {
-    let mut result = msg.to_string();
+    let mut result = redact_google_cookie_pairs(msg);
     if let Ok(email_re) =
         regex_lite::Regex::new(r"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}")
     {
@@ -702,6 +722,7 @@ pub(crate) fn inject_host_api_with_deadline<'js>(
     inject_credentials(ctx, &host, account)?;
     inject_keychain(ctx, &host, instance_id)?;
     inject_sqlite(ctx, &host)?;
+    inject_chromium_cookies(ctx, &host, instance_id)?;
     inject_ls(ctx, &host, base_plugin_id)?;
     inject_ccusage(ctx, &host, base_plugin_id, deadline)?;
     inject_usage_daily(ctx, &host, instance_id, app_data_dir)?;
@@ -1186,6 +1207,19 @@ fn inject_crypto<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
         })?,
     )?;
 
+    crypto_obj.set(
+        "sha1Hex",
+        Function::new(ctx.clone(), move |text: String| -> String {
+            let digest = Sha1::digest(text.as_bytes());
+            let mut out = String::with_capacity(digest.len() * 2);
+            for byte in digest.iter() {
+                use std::fmt::Write as _;
+                let _ = write!(&mut out, "{:02x}", byte);
+            }
+            out
+        })?,
+    )?;
+
     host.set("crypto", crypto_obj)?;
     Ok(())
 }
@@ -1341,12 +1375,18 @@ fn inject_http<'js>(
                 let mut builder = reqwest::blocking::Client::builder()
                     .timeout(timeout)
                     .connect_timeout(timeout)
-                    .redirect(reqwest::redirect::Policy::none());
+                    .redirect(reqwest::redirect::Policy::none())
+                    // Dual-stack hosts with no working IPv6 (AAAA exists, no route) fail
+                    // in reqwest before falling back to A. Bind IPv4 so Google/etc still work.
+                    .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
                 if let Some(resolved) = crate::proxy_config::get_resolved_proxy() {
                     builder = builder.proxy(resolved.proxy.clone());
                 }
                 if req.dangerously_ignore_tls.unwrap_or(false) {
                     builder = builder.danger_accept_invalid_certs(true);
+                }
+                if req.http1_only.unwrap_or(false) {
+                    builder = builder.http1_only();
                 }
                 let client = builder
                     .build()
@@ -1447,7 +1487,8 @@ pub fn patch_http_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
                     headers: req.headers || null,
                     bodyText: req.bodyText || null,
                     timeoutMs: req.timeoutMs || 10000,
-                    dangerouslyIgnoreTls: req.dangerouslyIgnoreTls || false
+                    dangerouslyIgnoreTls: req.dangerouslyIgnoreTls || false,
+                    http1Only: req.http1Only || false
                 });
                 var respJson = rawFn(json);
                 return JSON.parse(respJson);
@@ -1802,6 +1843,7 @@ struct HttpReqParams {
     body_text: Option<String>,
     timeout_ms: Option<u64>,
     dangerously_ignore_tls: Option<bool>,
+    http1_only: Option<bool>,
 }
 
 #[derive(serde::Serialize)]
@@ -4190,6 +4232,64 @@ fn inject_sqlite<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()
     Ok(())
 }
 
+fn inject_chromium_cookies<'js>(
+    ctx: &Ctx<'js>,
+    host: &Object<'js>,
+    plugin_id: &str,
+) -> rquickjs::Result<()> {
+    let cookies_obj = Object::new(ctx.clone())?;
+    let pid = plugin_id.to_string();
+
+    cookies_obj.set(
+        "_readRaw",
+        Function::new(
+            ctx.clone(),
+            move |ctx_inner: Ctx<'_>, opts_json: String| -> rquickjs::Result<String> {
+                let opts: crate::chromium_cookies::ChromiumCookiesReadOpts =
+                    serde_json::from_str(&opts_json).map_err(|e| {
+                        Exception::throw_message(
+                            &ctx_inner,
+                            &format!("invalid chromiumCookies.read args: {}", e),
+                        )
+                    })?;
+                log::info!(
+                    "[plugin:{}] chromiumCookies.read: {} names, {} hosts",
+                    pid,
+                    opts.names.len(),
+                    opts.hosts.len()
+                );
+                let map = crate::chromium_cookies::read_chromium_cookies(&opts)
+                    .map_err(|e| Exception::throw_message(&ctx_inner, &e))?;
+                serde_json::to_string(&map).map_err(|e| {
+                    Exception::throw_message(&ctx_inner, &format!("serialize cookies failed: {}", e))
+                })
+            },
+        )?,
+    )?;
+
+    host.set("chromiumCookies", cookies_obj)?;
+    Ok(())
+}
+
+pub fn patch_chromium_cookies_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+        (function() {
+            var rawFn = __openusage_ctx.host.chromiumCookies._readRaw;
+            __openusage_ctx.host.chromiumCookies.read = function(opts) {
+                var json = JSON.stringify({
+                    hosts: (opts && opts.hosts) || [],
+                    names: (opts && opts.names) || []
+                });
+                var respJson = rawFn(json);
+                return JSON.parse(respJson);
+            };
+        })();
+        "#
+        .as_bytes(),
+    )
+}
+
 fn iso_now() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
@@ -4547,6 +4647,39 @@ mod tests {
     }
 
     #[test]
+    fn crypto_api_exposes_sha1_hex() {
+        let rt = Runtime::new().expect("runtime");
+        let ctx = Context::full(&rt).expect("context");
+        ctx.with(|ctx| {
+            let app_data = std::env::temp_dir();
+            inject_host_api(&ctx, "test", "test", None, &app_data, "0.0.0")
+                .expect("inject host api");
+            let result: String = ctx
+                .eval(r#"__openusage_ctx.host.crypto.sha1Hex("hello")"#)
+                .expect("js sha1");
+            assert_eq!(result, "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+        });
+    }
+
+    #[test]
+    fn chromium_cookies_api_exposes_read() {
+        let rt = Runtime::new().expect("runtime");
+        let ctx = Context::full(&rt).expect("context");
+        ctx.with(|ctx| {
+            let app_data = std::env::temp_dir();
+            inject_host_api(&ctx, "test", "test", None, &app_data, "0.0.0")
+                .expect("inject host api");
+            patch_chromium_cookies_wrapper(&ctx).expect("patch chromium cookies");
+            let globals = ctx.globals();
+            let probe_ctx: Object = globals.get("__openusage_ctx").expect("probe ctx");
+            let host: Object = probe_ctx.get("host").expect("host");
+            let cookies: Object = host.get("chromiumCookies").expect("chromiumCookies");
+            let _raw: Function = cookies.get("_readRaw").expect("_readRaw");
+            let _read: Function = cookies.get("read").expect("read");
+        });
+    }
+
+    #[test]
     fn fireworks_api_exposes_billing_export_helper() {
         let rt = Runtime::new().expect("runtime");
         let ctx = Context::full(&rt).expect("context");
@@ -4630,10 +4763,11 @@ mod tests {
             "OLLAMA_HOST",
             "OLLAMA_SESSION_COOKIE",
             "OLLAMA_COOKIE",
+            "GEMINI_COOKIE",
         ] {
             assert!(
                 WHITELISTED_ENV_VARS.contains(&name),
-                "{name} must be whitelisted for Ollama auth compatibility"
+                "{name} must be whitelisted for Ollama/Gemini auth compatibility"
             );
         }
 
@@ -5171,6 +5305,38 @@ mod tests {
             redacted.contains("\"name\": \"[REDACTED]\""),
             "name should show [REDACTED], got: {}",
             redacted
+        );
+    }
+
+    #[test]
+    fn redact_body_redacts_google_session_cookies() {
+        let body = r#"{"Cookie":"SID=g.a000sidvaluehere; SAPISID=sapsidvaluehere; __Secure-1PSID=psidvaluehereok"}"#;
+        let redacted = redact_body(body);
+        assert!(
+            !redacted.contains("g.a000sidvaluehere"),
+            "SID value should be redacted, got: {redacted}"
+        );
+        assert!(
+            !redacted.contains("sapsidvaluehere"),
+            "SAPISID value should be redacted, got: {redacted}"
+        );
+        assert!(
+            !redacted.contains("psidvaluehereok"),
+            "__Secure-1PSID value should be redacted, got: {redacted}"
+        );
+    }
+
+    #[test]
+    fn redact_log_message_redacts_google_cookie_pairs() {
+        let msg = "Cookie: SID=g.a000sidvaluehere; SAPISID=sapsidvaluehere";
+        let redacted = redact_log_message(msg);
+        assert!(
+            !redacted.contains("g.a000sidvaluehere"),
+            "SID should be redacted, got: {redacted}"
+        );
+        assert!(
+            !redacted.contains("sapsidvaluehere"),
+            "SAPISID should be redacted, got: {redacted}"
         );
     }
 

@@ -118,6 +118,8 @@ ctx.host.fs.writeText(statePath, JSON.stringify(state, null, 2))
 ```typescript
 host.crypto.decryptAes256Gcm(envelope: string, keyB64: string): string  // Throws on error
 host.crypto.encryptAes256Gcm(plaintext: string, keyB64: string): string // Throws on error
+host.crypto.sha256Hex(text: string): string
+host.crypto.sha1Hex(text: string): string
 ```
 
 AES-256-GCM helpers for plugins that need to read or write locally encrypted auth/config blobs.
@@ -141,6 +143,30 @@ const nextEnvelope = ctx.host.crypto.encryptAes256Gcm(JSON.stringify(auth, null,
 ctx.host.fs.writeText("~/.factory/auth.v2.file", nextEnvelope)
 ```
 
+`sha1Hex` / `sha256Hex` return lowercase hex digests (SAPISIDHASH, key fingerprints).
+
+## Chromium cookies
+
+```typescript
+host.chromiumCookies.read(opts: { hosts: string[], names: string[] }): Record<string, string>
+```
+
+Decrypts Chromium-family cookies (`v10`/`v11` AES-128-CBC) from the local profile Cookies DB. Values are never logged.
+
+- **Linux:** `secret-tool lookup application chrome` (and chromium/brave/edge) plus the `peanuts` fallback.
+- **macOS:** Keychain `Chrome Safe Storage` (1003 PBKDF2 iterations).
+- **Windows:** not supported (`v20` / DPAPI). `v12`/`v20` prefixes throw instead of returning junk.
+- Copies the DB first so a running Chrome lock does not fail the read.
+
+### Example
+
+```javascript
+const cookies = ctx.host.chromiumCookies.read({
+  hosts: [".google.com", "google.com"],
+  names: ["__Secure-1PSID", "SAPISID"],
+})
+```
+
 ## Environment
 
 ```typescript
@@ -153,7 +179,7 @@ Reads an environment variable by name.
 
 - Returns variable value as string when set
 - Returns `null` when missing
-- Variable must be whitelisted first in `src-tauri/src/plugin_engine/host_api.rs`
+- Variable must be whitelisted first in `crates/crossusage-core/src/plugin_engine/host_api.rs` (`GEMINI_COOKIE` is allowed)
 - Resolution order: current process env first, then a login+interactive shell lookup (macOS)
 - Values may be cached for the app session; restart OpenUsage after changing shell config
 
@@ -175,6 +201,7 @@ host.http.request({
   headers?: Record<string, string>,
   bodyText?: string,
   timeoutMs?: number         // Default: 10000
+  http1Only?: boolean        // Default: false. Gemini Apps needs this (HTTP/2 PROTOCOL_ERROR).
 }): {
   status: number,
   headers: Record<string, string>,
