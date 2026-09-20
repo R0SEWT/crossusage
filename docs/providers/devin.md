@@ -136,14 +136,14 @@ Response fields used:
 | Response field | Display |
 |---|---|
 | `userStatus.planStatus.planInfo.planName` | Plan label |
-| `userStatus.planStatus.dailyQuotaRemainingPercent` | Weekly quota percent when `hideDailyQuota` is `true` and no weekly percent is present |
-| `userStatus.planStatus.weeklyQuotaRemainingPercent` | Weekly quota percent if Devin starts returning it |
+| `userStatus.planStatus.dailyQuotaRemainingPercent` | Daily quota percent when visible; weekly fallback only when weekly percent **and** weekly reset are both missing and daily quota is hidden |
+| `userStatus.planStatus.weeklyQuotaRemainingPercent` | Weekly quota percent remaining. Proto3 JSON omits zeros — a weekly reset with no percentage is treated as **0 remaining / 100% used** |
 | `userStatus.planStatus.dailyQuotaResetAtUnix` | Daily reset time when daily quota is visible |
-| `userStatus.planStatus.weeklyQuotaResetAtUnix` | Weekly reset time |
+| `userStatus.planStatus.weeklyQuotaResetAtUnix` | Weekly reset time; also identifies an exhausted weekly window when the remaining percent is omitted |
 | `userStatus.planStatus.overageBalanceMicros` | Extra usage balance |
 | `userStatus.planStatus.planInfo.hideDailyQuota` | Hide daily quota line when `true` |
 
-Devin currently returns no `weeklyQuotaRemainingPercent` field in the observed payload. When `hideDailyQuota` is `true`, OpenUsage maps `dailyQuotaRemainingPercent` as a used percentage on the visible weekly line and uses `weeklyQuotaResetAtUnix` for the reset timer. Despite the field name, `100` matches Devin's `Weekly quota: 100%` UI, not `100% left`.
+A present-but-unparsable weekly percentage is quota-unavailable (schema drift), not an exhausted window. Despite remaining-percent field names, tiles show percent **used** (`100 - remaining`).
 
 ## Plugin Strategy
 

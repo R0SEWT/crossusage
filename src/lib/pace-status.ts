@@ -48,14 +48,11 @@ export function calculatePaceStatus(
     return null
   }
 
-  if (limit <= 0 || periodDurationMs <= 0) return null
+  if (limit <= 0 || periodDurationMs <= 0 || used <= 0) return null
 
   const periodStartMs = resetsAtMs - periodDurationMs
   const elapsedMs = nowMs - periodStartMs
   if (elapsedMs <= 0 || nowMs >= resetsAtMs) return null
-
-  // No usage = definitionally ahead of pace (skip minimum-elapsed threshold)
-  if (used === 0) return { status: "ahead", projectedUsage: 0 }
 
   const minElapsed = minimumElapsedMs(periodDurationMs)
   if (elapsedMs < minElapsed) return null

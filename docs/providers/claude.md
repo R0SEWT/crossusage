@@ -57,7 +57,11 @@ Returns rate limit windows and optional extra credits.
 }
 ```
 
-All windows are enforced simultaneously — hitting any limit throttles the user.
+### GET /api/oauth/profile
+
+Account/organization identity plus the **current** plan (`organization_type`, `rate_limit_tier`). Claude Code stamps `subscriptionType` / `rateLimitTier` at login and never updates them; this endpoint is what reflects an upgrade (Max 5x → Max 20x) without re-login.
+
+Fetched **once per access token** after a successful `/api/oauth/usage` call. Failures keep the stored plan and do not change Session/Weekly bars. Inference-only tokens skip it.
 
 ## Authentication
 

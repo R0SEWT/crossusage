@@ -467,6 +467,21 @@ mod tests {
     }
 
     #[test]
+    fn v0711_v0712_pricing_aliases_and_rates() {
+        let p = ModelPricing::from_bundled();
+        assert!(p.can_price("muse-spark-1.3"));
+        assert!(p.can_price("muse-spark-1.3-high"));
+        assert!(p.can_price("gpt-6-astra"));
+        assert!(p.can_price("gpt-6-astra-fast"));
+        assert!(p.can_price("gemini-3.8-flash"));
+        assert!(p.can_price("claude-fable-5.1"));
+        let astra = p.resolve("gpt-6-astra").expect("astra");
+        assert!(astra.input_per_million > 0.0);
+        let spark = p.resolve("muse-spark-1.3-xhigh").expect("spark");
+        assert!((spark.input_per_million - 1.25).abs() < 0.01);
+    }
+
+    #[test]
     fn request_wide_long_context_uses_higher_tier_for_all_fields() {
         let rates = ModelRates {
             input_per_million: 1.0,

@@ -270,6 +270,32 @@ describe("codex plugin", () => {
     expect(credits.value).toBe("$4.00 · 100 credits")
   })
 
+  it("maps self_serve_business_prolite to Business Premium", async () => {
+    const ctx = makeCtx()
+    ctx.host.fs.writeText("~/.codex/auth.json", JSON.stringify({
+      tokens: { access_token: "token" },
+      last_refresh: new Date().toISOString(),
+    }))
+    ctx.host.http.request.mockReturnValue({
+      status: 200,
+      headers: {
+        "x-codex-primary-used-percent": "25",
+        "x-codex-secondary-used-percent": "50",
+      },
+      bodyText: JSON.stringify({
+        plan_type: "self_serve_business_prolite",
+        rate_limit: {
+          primary_window: { reset_after_seconds: 60, used_percent: 10 },
+          secondary_window: { reset_after_seconds: 120, used_percent: 20 },
+        },
+      }),
+    })
+
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+    expect(result.plan).toBe("Business Premium")
+  })
+
   it("uses zero credits from the response body when the account has no credits", async () => {
     const ctx = makeCtx()
     ctx.host.fs.writeText("~/.codex/auth.json", JSON.stringify({

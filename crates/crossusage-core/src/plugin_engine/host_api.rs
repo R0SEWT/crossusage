@@ -474,6 +474,7 @@ fn redact_body(body: &str) -> String {
         "email",
         "login",
         "analytics_tracking_id",
+        "uuid",
     ];
     for key in sensitive_keys {
         // Match "key": "value" or "key":"value"
@@ -5337,6 +5338,24 @@ mod tests {
         assert!(
             !redacted.contains("sapsidvaluehere"),
             "SAPISID should be redacted, got: {redacted}"
+        );
+    }
+
+    #[test]
+    fn redact_body_redacts_claude_profile_uuids() {
+        let body = r#"{"account":{"uuid":"acct-1234567890abcdef"},"organization":{"uuid":"org-abcdef1234567890","organization_type":"claude_max"}}"#;
+        let redacted = redact_body(body);
+        assert!(
+            !redacted.contains("acct-1234567890abcdef"),
+            "account uuid should be redacted, got: {redacted}"
+        );
+        assert!(
+            !redacted.contains("org-abcdef1234567890"),
+            "organization uuid should be redacted, got: {redacted}"
+        );
+        assert!(
+            redacted.contains("claude_max"),
+            "organization_type should stay visible, got: {redacted}"
         );
     }
 

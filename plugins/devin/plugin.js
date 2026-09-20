@@ -308,9 +308,14 @@
     var hideDailyQuota = planInfo.hideDailyQuota === true
     var dailyRemaining = readFiniteNumber(planStatus.dailyQuotaRemainingPercent)
     var weeklyRemaining = readFiniteNumber(planStatus.weeklyQuotaRemainingPercent)
+    if (hasOwn(planStatus, "weeklyQuotaRemainingPercent") && weeklyRemaining === null) {
+      throw QUOTA_HINT
+    }
     var dailyReset = !hideDailyQuota ? unixSecondsToIso(ctx, planStatus.dailyQuotaResetAtUnix) : null
     var weeklyReset = unixSecondsToIso(ctx, planStatus.weeklyQuotaResetAtUnix)
     var extraUsageBalance = formatDollarsFromMicros(planStatus.overageBalanceMicros)
+    // Proto3 JSON omits zeros. A weekly reset with no percentage is an exhausted window (0 remaining).
+    if (weeklyRemaining === null && weeklyReset) weeklyRemaining = 0
 
     var dailyLine = !hideDailyQuota
       ? buildQuotaLine(ctx, "Daily quota", dailyRemaining, dailyReset, DAY_MS)

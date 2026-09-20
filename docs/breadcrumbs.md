@@ -1,5 +1,9 @@
 # Breadcrumbs
 
+## 2026-09-20
+
+- Port OpenUsage **v0.7.11 + v0.7.12** → CrossUsage **1.4.5** on `feat/port-openusage-0.7.12`. Pricing supplement 2026-09-11; pace zero-usage; Grok subagent ledgers; Codex Business Premium + gpt-reserve@Luna + Astra; Antigravity sibling conversation stores; Devin exhausted weekly; Claude null nested model + live `/api/oauth/profile`. Tracker: [PORT-0.7.11-0.7.12.md](./PORT-0.7.11-0.7.12.md). Gemini Apps ships in the same 1.4.5 changelog (already merged).
+
 ## 2026-09-14
 
 - Gemini Apps: keep cookies from one Chromium profile; require PSID+SAPISID before skipping `GEMINI_COOKIE`; plan label from `sJBwce` only.

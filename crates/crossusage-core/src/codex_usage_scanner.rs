@@ -509,6 +509,8 @@ fn parse_file(path: &Path) -> Vec<CodexEvent> {
         let model = resolve_model(parsed_model, &mut current_model);
         let pricing_model = if model == AUTO_REVIEW_MODEL {
             Some(auto_review_fallback(&event_day_key(&timestamp)))
+        } else if model == RESERVE_MODEL {
+            Some(RESERVE_PRICING_MODEL.to_string())
         } else {
             None
         };
@@ -558,6 +560,8 @@ fn resolve_model(parsed: Option<String>, current_model: &mut Option<String>) -> 
 }
 
 const AUTO_REVIEW_MODEL: &str = "codex-auto-review";
+const RESERVE_MODEL: &str = "gpt-reserve";
+const RESERVE_PRICING_MODEL: &str = "gpt-5.6-luna";
 
 /// `codex-auto-review` release timeline (newest first). A line dated on/after a
 /// release prices as that Codex model; the usage slug stays `codex-auto-review`.
@@ -809,6 +813,30 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(rows[0].models.contains_key("codex-auto-review"));
         assert!(!rows[0].models.contains_key("gpt-5.5"));
+        assert!(rows[0].total_cost.unwrap_or(0.0) > 0.0);
+    }
+
+    #[test]
+    fn reserve_keeps_slug_and_prices_at_luna() {
+        let ts = OffsetDateTime::from_unix_timestamp(1_774_947_200).expect("ts");
+        let rows = aggregate(
+            &[CodexEvent {
+                timestamp: ts,
+                model: RESERVE_MODEL.into(),
+                pricing_model: Some(RESERVE_PRICING_MODEL.into()),
+                input: 1000,
+                cached: 0,
+                output: 100,
+                reasoning: 0,
+                total: 1100,
+                is_fast: false,
+            }],
+            ts,
+            &ModelPricing::from_bundled(),
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].models.contains_key("gpt-reserve"));
+        assert!(!rows[0].models.contains_key("gpt-5.6-luna"));
         assert!(rows[0].total_cost.unwrap_or(0.0) > 0.0);
     }
 }

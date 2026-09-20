@@ -46,16 +46,9 @@ describe("pace-status", () => {
     expect(calculatePaceStatus(10, 100, resetsAtMs, periodDurationMs, beforeThresholdNowMs)).toBeNull()
   })
 
-  it("returns ahead for zero usage (skips 5% threshold)", () => {
-    const resetsAtMs = Date.parse("2026-02-03T00:00:00.000Z")
-    const periodDurationMs = ONE_DAY_MS
-    const periodStartMs = resetsAtMs - periodDurationMs
-    // 45 min in = 3.1% < 5%, but used === 0 should still return ahead
-    const earlyNowMs = periodStartMs + 45 * 60 * 1000
-    expect(calculatePaceStatus(0, 100, resetsAtMs, periodDurationMs, earlyNowMs)).toEqual({
-      status: "ahead",
-      projectedUsage: 0,
-    })
+  it("returns null for zero usage (no burn rate to project)", () => {
+    const { resetsAtMs, nowMs } = midPeriodNowAndReset()
+    expect(calculatePaceStatus(0, 100, resetsAtMs, ONE_DAY_MS, nowMs)).toBeNull()
   })
 
   it("returns behind for over-limit usage (skips 5% threshold)", () => {
