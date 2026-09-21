@@ -1,14 +1,14 @@
-# OpenUsage v0.7.11 + v0.7.12 port (CrossUsage 1.4.5)
+# OpenUsage v0.7.11 + v0.7.12 port (CrossUsage 1.5.0)
 
 Upstream **v0.7.11** (2026-09-05) was never landed; bundle it with **v0.7.12** (2026-09-17). Swift-only — port applicable behavior into JS plugins + Rust scanners + React/Tauri.
 
-**Version:** [**1.4.5**](./VERSIONING.md) — upstream bundle = **PATCH**. Baseline: CrossUsage **1.4.4** (+ Gemini Apps already on the branch). Tags: `v0.7.11`, `v0.7.12`.
+**Version:** [**1.5.0**](./VERSIONING.md) — **MINOR** because Gemini Apps is a new CrossUsage provider. The upstream bundle itself is PATCH-class and rides along. Baseline: CrossUsage **1.4.4**. Tags: `v0.7.11`, `v0.7.12`.
 
 ## Status legend
 
 | Status | Meaning |
 |--------|---------|
-| **ship** | In **1.4.5** scope |
+| **ship** | In **1.5.0** scope |
 | **skip** | macOS-only, upstream infra, or already in the fork |
 | **later** | Valid fork work; deferred |
 
@@ -62,4 +62,4 @@ Upstream **v0.7.11** (2026-09-05) was never landed; bundle it with **v0.7.12** (
 | Codex Business Premium | **done** |
 | Antigravity sibling stores | **done** |
 | Host redacts Claude profile `uuid` | **done** |
-| `CHANGELOG.md` **1.4.5** cites **v0.7.11 + v0.7.12** | **done** |
+| `CHANGELOG.md` **1.5.0** cites Gemini Apps + **v0.7.11 + v0.7.12** | **done** |

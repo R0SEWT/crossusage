@@ -2,7 +2,7 @@
 
 ## 2026-09-20
 
-- **1.4.5 port scope:** OpenUsage **v0.7.11 + v0.7.12** as one PATCH (0.7.11 was never ported). Skip Claude Swap/Desktop/iCloud/ownership scans, PostHog/stale.yml, menu-bar pin remap. Ollama Cloud Ed25519 skipped (cookies/API key already). OpenCode Codex OAuth (#1195) later. Antigravity #1206: sibling `antigravity*` conversation dirs now; step timestamps later. Gemini Apps was already on 1.4.4 HEAD — ships in 1.4.5 rather than holding a separate MINOR.
+- **1.5.0:** MINOR — Gemini Apps is a new CrossUsage provider ([VERSIONING.md](./VERSIONING.md)). OpenUsage **v0.7.11 + v0.7.12** rides along (0.7.11 was never ported; would be PATCH alone). Skip Claude Swap/Desktop/iCloud/ownership scans, PostHog/stale.yml, menu-bar pin remap. Ollama Cloud Ed25519 skipped (cookies/API key already). OpenCode Codex OAuth (#1195) later. Antigravity #1206: sibling `antigravity*` conversation dirs now; step timestamps later.
 - **Claude live plan:** `GET /api/oauth/profile` once per access token after a successful usage fetch (failed lookups cached until the token rotates). Does not change Session/Weekly bars.
 - **Devin weekly omitted percent:** proto3 drops zeros. Weekly reset + no percent → 0 remaining. Hidden-daily fallback only when weekly percent **and** reset are both missing.
 

@@ -4,9 +4,9 @@
 
 ## Unreleased
 
-## 1.4.5
+## 1.5.0
 
-**Theme:** OpenUsage **v0.7.11 + v0.7.12** upstream patch (PATCH per [docs/VERSIONING.md](docs/VERSIONING.md)). Gemini Apps (already on this branch) ships here. Port tracker: [docs/PORT-0.7.11-0.7.12.md](docs/PORT-0.7.11-0.7.12.md).
+**Theme:** Fork MINOR — Gemini Apps. OpenUsage **v0.7.11 + v0.7.12** rides along (would be PATCH alone). Port tracker: [docs/PORT-0.7.11-0.7.12.md](docs/PORT-0.7.11-0.7.12.md).
 
 ### New features
 
@@ -27,6 +27,7 @@ Skipped: Ollama Cloud Ed25519 (#1173 — already have cookies/API key), OpenCode
 
 ---
 
+## 1.4.4
 
 **Theme:** Tray style switching and Classic vs Modern logo pick.
 
