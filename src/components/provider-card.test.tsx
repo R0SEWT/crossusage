@@ -723,8 +723,10 @@ describe("ProviderCard", () => {
         ]}
       />
     )
-    expect(screen.getByText("Plenty of room")).toBeInTheDocument()
+    expect(screen.queryByText("Plenty of room")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Plenty of room")).not.toBeInTheDocument()
     expect(screen.queryByText(/at reset/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Resets in /)).toBeInTheDocument()
     vi.useRealTimers()
   })
 

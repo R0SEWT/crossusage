@@ -1,5 +1,5 @@
 //! Reads token accounting from Antigravity local conversation SQLite DBs
-//! (`~/.gemini/antigravity-cli/conversations/*.db`).
+//! (`~/.gemini/antigravity*/conversations/*.db`).
 //! Discovered by FelixIsaac in openusage#1058/#1120. Simple re-scan (no WAL fingerprint cache).
 
 use crate::antigravity_proto::{self, GenerationEvent};
@@ -65,12 +65,27 @@ fn days_back_from_since(since: OffsetDateTime) -> i32 {
     ((now.date() - since.date()).whole_days().max(0) + 1) as i32
 }
 
-fn conversations_dir(home_path: Option<&str>) -> PathBuf {
+fn conversations_dirs(home_path: Option<&str>) -> Vec<PathBuf> {
     let home = match home_path {
         Some(p) => expand_tilde(p),
         None => dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")),
     };
-    home.join(".gemini/antigravity-cli/conversations")
+    let gemini = home.join(".gemini");
+    let Ok(entries) = fs::read_dir(&gemini) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("antigravity")
+                && e.path().is_dir()
+        })
+        .map(|e| e.path().join("conversations"))
+        .collect();
+    dirs.sort();
+    dirs
 }
 
 fn scan(
@@ -78,14 +93,14 @@ fn scan(
     home_path: Option<&str>,
     pricing: &ModelPricing,
 ) -> Option<Vec<DailyUsageRow>> {
-    let dir = conversations_dir(home_path);
-    let paths = match database_files(&dir) {
-        Ok(p) => p,
-        Err(_) => {
-            warn_unreadable_usage_file(&dir);
-            return None;
+    let dirs = conversations_dirs(home_path);
+    let mut paths = Vec::new();
+    for dir in &dirs {
+        match database_files(dir) {
+            Ok(p) => paths.extend(p),
+            Err(_) => warn_unreadable_usage_file(dir),
         }
-    };
+    }
     if paths.is_empty() {
         return None;
     }
@@ -362,6 +377,31 @@ mod tests {
         assert!(rows[0].total_cost.is_some());
         assert!(rows[0].models.contains_key("gemini-3.6-flash"));
         assert!(!rows[0].models.contains_key("___unset_antigravity_model___"));
+    }
+
+    #[test]
+    fn scan_includes_sibling_antigravity_conversation_stores() {
+        let tmp = TempDir::new().unwrap();
+        let cli = tmp.path().join(".gemini/antigravity-cli/conversations");
+        let ide = tmp.path().join(".gemini/antigravity/conversations");
+        fs::create_dir_all(&cli).unwrap();
+        fs::create_dir_all(&ide).unwrap();
+        let now = OffsetDateTime::now_utc().unix_timestamp() as u64;
+        seed_db(
+            &cli.join("cli.db"),
+            &[(1, Some(encode_generation_blob("gemini-3.6-flash", 10, 90, 40, 5, now)))],
+        );
+        seed_db(
+            &ide.join("ide.db"),
+            &[(1, Some(encode_generation_blob("gemini-3.6-flash", 20, 80, 10, 0, now)))],
+        );
+
+        let (status, rows) = query_daily_since("", Some(tmp.path().to_str().unwrap()));
+        assert_eq!(status, LogScanStatus::Ok);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].input_tokens, 200);
+        assert_eq!(rows[0].output_tokens, 50);
+        assert_eq!(rows[0].total_tokens, 255);
     }
 
     #[test]

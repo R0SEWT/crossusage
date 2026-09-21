@@ -271,9 +271,6 @@ fn parse_file(path: &Path) -> Vec<ClaudeEntry> {
         if !line.windows(marker.len()).any(|w| w == marker) {
             continue;
         }
-        if has_unsupported_null_field(line) {
-            continue;
-        }
         entries.extend(parse_entries(line));
     }
     entries
@@ -296,6 +293,9 @@ fn parse_entries(line: &[u8]) -> Vec<ClaudeEntry> {
     let Some(usage) = message.get("usage") else {
         return vec![];
     };
+    if has_unsupported_null_field(&v, message, usage) {
+        return vec![];
+    }
     let Some((tokens, has_speed)) = token_breakdown(usage) else {
         return vec![];
     };
@@ -444,13 +444,25 @@ fn is_semver_prefix(value: &str) -> bool {
             .is_some_and(|c| c.is_ascii_digit())
 }
 
-fn has_unsupported_null_field(line: &[u8]) -> bool {
-    const FIELDS: &[&str] = &[
-        "id", "cwd", "model", "speed", "costUSD", "version", "sessionId", "requestId",
-        "isApiErrorMessage", "cache_read_input_tokens", "cache_creation_input_tokens",
+fn has_unsupported_null_field(object: &Value, message: &Value, usage: &Value) -> bool {
+    const OBJECT_FIELDS: &[&str] = &[
+        "cwd",
+        "costUSD",
+        "version",
+        "sessionId",
+        "requestId",
+        "isApiErrorMessage",
     ];
-    let text = String::from_utf8_lossy(line);
-    FIELDS.iter().any(|field| text.contains(&format!("\"{field}\":null")))
+    const MESSAGE_FIELDS: &[&str] = &["id", "model"];
+    const USAGE_FIELDS: &[&str] = &[
+        "speed",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ];
+    let is_null = |container: &Value, field: &str| matches!(container.get(field), Some(Value::Null));
+    OBJECT_FIELDS.iter().any(|f| is_null(object, f))
+        || MESSAGE_FIELDS.iter().any(|f| is_null(message, f))
+        || USAGE_FIELDS.iter().any(|f| is_null(usage, f))
 }
 
 pub fn parse_iso_timestamp(raw: &str) -> Option<OffsetDateTime> {
@@ -652,5 +664,20 @@ mod tests {
         assert_eq!(entries[1].tokens.input, 10);
         assert_eq!(entries[1].tokens.output, 5);
         assert!(entries[1].cost_usd.is_none());
+    }
+
+    #[test]
+    fn nested_iteration_null_model_does_not_drop_parent() {
+        let line = br#"{"timestamp":"2026-07-12T10:00:00.000Z","message":{"id":"m1","model":"claude-sonnet-4-20250514","usage":{"input_tokens":100,"output_tokens":50,"iterations":[{"type":"advisor_message","model":null,"input_tokens":10,"output_tokens":5}]}},"requestId":"r1","version":"1.0.0"}"#;
+        let entries = parse_entries(line);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tokens.input, 100);
+        assert_eq!(entries[0].model.as_deref(), Some("claude-sonnet-4-20250514"));
+    }
+
+    #[test]
+    fn top_level_null_model_is_still_rejected() {
+        let line = br#"{"timestamp":"2026-07-12T10:00:00.000Z","message":{"id":"m1","model":null,"usage":{"input_tokens":100,"output_tokens":50}},"requestId":"r1","version":"1.0.0"}"#;
+        assert!(parse_entries(line).is_empty());
     }
 }

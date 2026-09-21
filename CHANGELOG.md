@@ -4,9 +4,28 @@
 
 ## Unreleased
 
+## 1.5.0
+
+**Theme:** Fork MINOR — Gemini Apps. OpenUsage **v0.7.11 + v0.7.12** rides along (would be PATCH alone). Port tracker: [docs/PORT-0.7.11-0.7.12.md](docs/PORT-0.7.11-0.7.12.md).
+
 ### New features
 
 - **Gemini Apps** — Current and Weekly usage from [gemini.google.com](https://gemini.google.com/usage) via Chrome cookies or `GEMINI_COOKIE`. Off by default. Not Antigravity / Gemini CLI quota.
+- **Muse Spark 1.3** — effort variants in the bundled pricing supplement (#1244).
+
+### Bug fixes
+
+- **Pricing** — Gemini 3.8 Flash, GPT-6 Astra (Codex priority + 272k), Fable 5.1, Cursor Grok Bot default/automation rates; Codex `gpt-reserve` at Luna. Supplement `updated_at` **2026-09-11** (#1211, #1208, #1197, #1246, #1247).
+- **Pace** — no fabricated “ahead of pace” on untouched meters (`used <= 0`) (#1016).
+- **Grok** — include subagent, resume, and fork session ledgers (#1193).
+- **Codex** — `self_serve_business_prolite` shows as **Business Premium** (#1194).
+- **Antigravity** — local spend from every `~/.gemini/antigravity*/conversations` store (#1206 dirs).
+- **Devin** — omitted weekly remaining with a weekly reset is 100% used, not a daily-quota stand-in (#1251).
+- **Claude** — keep parent usage when nested advisor `model` is null (#1261); plan badge from live `/api/oauth/profile` once per access token (#1262).
+
+Skipped: Ollama Cloud Ed25519 (#1173 — already have cookies/API key), OpenCode Codex OAuth (#1195 later), Claude Desktop/Swap/iCloud/ownership scans, menu-bar pin remap, PostHog/stale.yml, Antigravity step timestamps.
+
+---
 
 ## 1.4.4
 

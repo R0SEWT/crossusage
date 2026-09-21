@@ -30,7 +30,7 @@ Returns rate limit windows and optional credits.
 
 ```jsonc
 {
-  "plan_type": "plus",                     // plan tier
+  "plan_type": "plus",                     // plus | pro | prolite (Pro 5x) | self_serve_business_prolite (Business Premium)
   "rate_limit": {
     "primary_window": {
       "used_percent": 6,                   // % used in 5h rolling window
@@ -120,4 +120,4 @@ Response returns new `access_token`, and optionally new `refresh_token` and `id_
 
 ## Spend (log scan)
 
-Native Rust scanner reads `~/.codex/sessions` (and `archived_sessions`). Symlinked Codex homes are resolved (`canonicalize`); duplicate session files under the same home (including archived copies of the same relative path) are deduped. Pi coding-agent daily usage is merged into Codex spend tiles when present.
+Native Rust scanner reads `~/.codex/sessions` (and `archived_sessions`). Symlinked Codex homes are resolved (`canonicalize`); duplicate session files under the same home (including archived copies of the same relative path) are deduped. Pi coding-agent daily usage is merged into Codex spend tiles when present. `codex-auto-review` stays that slug and is priced as GPT-5.6 Luna from 2026-07-09; `gpt-reserve` stays that slug and is priced at Luna rates.

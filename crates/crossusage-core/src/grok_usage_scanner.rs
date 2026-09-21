@@ -125,9 +125,7 @@ fn collect_updates(dir: &Path, out: &mut Vec<DiscoveredFile>) {
         let path = entry.path();
         if path.is_dir() {
             collect_updates(&path, out);
-        } else if path.file_name().and_then(|n| n.to_str()) == Some("updates.jsonl")
-            && is_coordinator_session(&path)
-        {
+        } else if path.file_name().and_then(|n| n.to_str()) == Some("updates.jsonl") {
             if let Ok(meta) = entry.metadata() {
                 out.push(DiscoveredFile {
                     path,
@@ -139,30 +137,8 @@ fn collect_updates(dir: &Path, out: &mut Vec<DiscoveredFile>) {
     }
 }
 
-/// Coordinator turns already include subagents. Missing summary → include; unreadable/non-object → skip.
-fn is_coordinator_session(updates: &Path) -> bool {
-    let Some(dir) = updates.parent() else {
-        return true;
-    };
-    let summary = dir.join("summary.json");
-    if !summary.is_file() {
-        return true;
-    }
-    let Ok(data) = fs::read(&summary) else {
-        return false;
-    };
-    let Ok(v) = serde_json::from_slice::<Value>(&data) else {
-        return false;
-    };
-    let Some(obj) = v.as_object() else {
-        return false;
-    };
-    match obj.get("session_kind").and_then(|k| k.as_str()) {
-        None => true,
-        Some(kind) => !kind.trim().to_ascii_lowercase().starts_with("subagent"),
-    }
-}
-
+/// Child sessions can contain usage absent from their coordinator. Include every
+/// `updates.jsonl`; event-id+model dedup drops replayed turns, not session kind.
 fn file_mtime_before(mtime: &SystemTime, since: OffsetDateTime) -> bool {
     let Ok(duration) = mtime.duration_since(SystemTime::UNIX_EPOCH) else {
         return false;
@@ -470,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_subagent_sessions_and_malformed_summaries() {
+    fn includes_subagent_and_forked_ledgers() {
         let tmp = tempfile::TempDir::new().unwrap();
         let sessions = tmp.path().join("sessions");
         let ts = OffsetDateTime::now_utc()
@@ -495,8 +471,8 @@ mod tests {
         }
         let rows = scan(1, Some(&tmp.path().to_string_lossy()), default_pricing()).unwrap();
         assert_eq!(
-            rows[0].total_tokens, 200,
-            "coord + legacy; skip subagent/fork/bad"
+            rows[0].total_tokens, 500,
+            "coord + sub + fork + legacy + unreadable summary"
         );
     }
 }

@@ -18,6 +18,9 @@
   let cachedUsageData = null  // last successful API response body (parsed JSON)
   // Cache belongs to the access+refresh credential pair — clear on login change (#953).
   let cachedUsageLoginKey = null
+  // Live plan from GET /api/oauth/profile: once per access token, including failed lookups (#1262).
+  let cachedLivePlan = null
+  let cachedLivePlanTokenKey = null
 
   function utf8DecodeBytes(bytes) {
     // Prefer native TextDecoder when available (QuickJS may not expose it).
@@ -158,6 +161,8 @@
     cachedUsageData = null
     rateLimitedUntilMs = 0
     lastUsageFetchMs = 0
+    cachedLivePlan = null
+    cachedLivePlanTokenKey = null
   }
 
   function readEnvText(ctx, name) {
@@ -226,6 +231,7 @@
     return {
       baseApiUrl: baseApiUrl,
       usageUrl: baseApiUrl + "/api/oauth/usage",
+      profileUrl: baseApiUrl + "/api/oauth/profile",
       refreshUrl: refreshUrl,
       clientId: clientId,
       oauthFileSuffix: oauthFileSuffix,
@@ -560,6 +566,67 @@
       },
       timeoutMs: 10000,
     })
+  }
+
+  function fetchProfile(ctx, accessToken) {
+    const oauthConfig = getOauthConfig(ctx)
+    return ctx.util.request({
+      method: "GET",
+      url: oauthConfig.profileUrl,
+      headers: {
+        Authorization: "Bearer " + accessToken.trim(),
+        Accept: "application/json",
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "claude-code/2.1.69",
+      },
+      timeoutMs: 10000,
+    })
+  }
+
+  function formatPlan(ctx, subscriptionType, rateLimitTier) {
+    const raw = typeof subscriptionType === "string" ? subscriptionType.trim() : ""
+    if (!raw) return null
+    const basePlan = ctx.fmt.planLabel(raw)
+    if (!basePlan) return null
+    let tierSuffix = ""
+    const rlt = String(rateLimitTier || "")
+    const tierMatch = rlt.match(/(\d+)x/)
+    if (tierMatch) {
+      tierSuffix = " " + tierMatch[1] + "x"
+    }
+    return basePlan + tierSuffix
+  }
+
+  function formatLivePlan(ctx, profile, oauth) {
+    const org = profile && typeof profile === "object" ? profile.organization : null
+    if (!org || typeof org !== "object") return null
+    let subscriptionType = org.organization_type || org.organizationType
+    if (typeof subscriptionType === "string" && subscriptionType.indexOf("claude_") === 0) {
+      subscriptionType = subscriptionType.slice("claude_".length)
+    }
+    return formatPlan(
+      ctx,
+      subscriptionType || (oauth && oauth.subscriptionType),
+      org.rate_limit_tier || org.rateLimitTier || (oauth && oauth.rateLimitTier)
+    )
+  }
+
+  function lookupLivePlan(ctx, accessToken, oauth) {
+    if (cachedLivePlanTokenKey === accessToken) return cachedLivePlan
+    cachedLivePlanTokenKey = accessToken
+    cachedLivePlan = null
+    try {
+      const resp = fetchProfile(ctx, accessToken)
+      if (!resp || resp.status < 200 || resp.status >= 300) {
+        ctx.host.log.warn("profile fetch failed: status=" + String(resp && resp.status))
+        return null
+      }
+      const profile = ctx.util.tryParseJson(resp.bodyText)
+      cachedLivePlan = formatLivePlan(ctx, profile, oauth)
+    } catch (e) {
+      ctx.host.log.warn("profile fetch failed: " + String(e))
+    }
+    return cachedLivePlan
   }
 
   function parseRetryAfterSeconds(headers) {
@@ -1136,6 +1203,7 @@
           }
           cachedUsageData = data
           rateLimitedUntilMs = 0
+          lookupLivePlan(ctx, creds.oauth.accessToken || accessToken, creds.oauth)
         }
         } // end fetch else-branch
       }
@@ -1143,18 +1211,10 @@
       ctx.host.log.info("skipping live usage fetch for inference-only token")
     }
 
-    let plan = null
-    if (creds.oauth.subscriptionType) {
-      const basePlan = ctx.fmt.planLabel(creds.oauth.subscriptionType)
-      if (basePlan) {
-        let tierSuffix = ""
-        const rlt = String(creds.oauth.rateLimitTier || "")
-        const tierMatch = rlt.match(/(\d+)x/)
-        if (tierMatch) {
-          tierSuffix = " " + tierMatch[1] + "x"
-        }
-        plan = basePlan + tierSuffix
-      }
+    let plan = formatPlan(ctx, creds.oauth.subscriptionType, creds.oauth.rateLimitTier)
+    const planToken = creds.oauth.accessToken || accessToken
+    if (cachedLivePlanTokenKey === planToken && cachedLivePlan) {
+      plan = cachedLivePlan
     }
 
     if (data) {
@@ -1270,6 +1330,8 @@
     lastUsageFetchMs = 0
     cachedUsageData = null
     cachedUsageLoginKey = null
+    cachedLivePlan = null
+    cachedLivePlanTokenKey = null
   }
 
   globalThis.__openusage_plugin = { id: "claude", probe, _resetState }

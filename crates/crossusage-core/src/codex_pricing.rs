@@ -22,7 +22,8 @@ fn dated_base_model(model: &str) -> String {
 fn codex_priority_multiplier(model: &str, rates: &ModelRates) -> f64 {
     match dated_base_model(model).as_str() {
         "gpt-5.5" | "gpt-5.5-pro" => 2.5,
-        "gpt-5.4" | "gpt-5.4-pro" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" => 2.0,
+        "gpt-5.4" | "gpt-5.4-pro" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+        | "gpt-6-astra" => 2.0,
         _ if (rates.fast_multiplier - 1.0).abs() < f64::EPSILON => 2.0,
         _ => rates.fast_multiplier,
     }
@@ -44,6 +45,8 @@ fn codex_long_context_rates(model: &str) -> Option<(f64, f64, f64)> {
         "gpt-5.6-sol" => Some((10.0, 45.0, 1.0)),
         "gpt-5.6-terra" => Some((4.0, 18.0, 0.4)),
         "gpt-5.6-luna" => Some((0.4, 1.8, 0.04)),
+        // Above 272k: 2x input and cache, 1.5x output.
+        "gpt-6-astra" => Some((20.0, 75.0, 2.0)),
         _ => None,
     }
 }
