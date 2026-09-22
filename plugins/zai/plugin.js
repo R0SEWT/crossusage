@@ -204,12 +204,12 @@
       return { plan, lines }
     }
 
-    const tokenLimit = findLimit(limits, "TOKENS_LIMIT", 3)
+    const tokenLimit = findLimit(limits, "TOKENS_LIMIT", 3) || findLimit(limits, "CREDIT_LIMIT", 3)
     if (tokenLimit) {
       lines.push(mapTokenProgress(ctx, tokenLimit, "Session", PERIOD_MS))
     }
 
-    const weeklyTokenLimit = findLimit(limits, "TOKENS_LIMIT", 6)
+    const weeklyTokenLimit = findLimit(limits, "TOKENS_LIMIT", 6) || findLimit(limits, "CREDIT_LIMIT", 6)
     if (weeklyTokenLimit) {
       lines.push(mapTokenProgress(ctx, weeklyTokenLimit, "Weekly", WEEK_MS))
     }
