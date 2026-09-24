@@ -44,6 +44,7 @@ import {
   loadUsageAlertSound,
   loadUsageAlertThreshold,
   migrateLegacyTraySettings,
+  migrateWindsurfToDevin,
   loadThemeMode,
   loadReduceAnimations,
   loadProductPollsAnswered,
@@ -177,6 +178,23 @@ describe("settings", () => {
       baseProviderId: "claude",
       instanceLabel: "Work",
       iconUrl: "icon",
+    })
+  })
+
+  it("keeps trayLines and providerInstances when migrating Windsurf to Devin", () => {
+    const migrated = migrateWindsurfToDevin({
+      order: ["claude", "claude:personal", "windsurf"],
+      disabled: [],
+      trayLines: { claude: ["Session", "Weekly"], "claude:personal": ["Session"] },
+      providerInstances: { "claude:personal": { baseProviderId: "claude", label: "Personal" } },
+    })
+    expect(migrated.order).toEqual(["claude", "claude:personal", "devin"])
+    expect(migrated.trayLines).toEqual({
+      claude: ["Session", "Weekly"],
+      "claude:personal": ["Session"],
+    })
+    expect(migrated.providerInstances).toEqual({
+      "claude:personal": { baseProviderId: "claude", label: "Personal" },
     })
   })
 

@@ -295,6 +295,7 @@ export function migrateWindsurfToDevin(settings: PluginSettings): PluginSettings
   }
 
   return {
+    ...settings,
     order,
     disabled: Array.from(new Set(disabled)),
   };
