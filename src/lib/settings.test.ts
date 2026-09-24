@@ -198,6 +198,45 @@ describe("settings", () => {
     })
   })
 
+  it("normalizes base provider labels: trims, drops empty and unknown providers", () => {
+    const plugins: PluginMeta[] = [
+      { id: "claude", name: "Claude", iconUrl: "", lines: [], primaryCandidates: [] },
+      { id: "codex", name: "Codex", iconUrl: "", lines: [], primaryCandidates: [] },
+    ]
+    const normalized = normalizePluginSettings(
+      {
+        order: ["claude", "codex"],
+        disabled: [],
+        providerLabels: { claude: "  Team  ", codex: "   ", gone: "Old" },
+      },
+      plugins,
+    )
+    expect(normalized.providerLabels).toEqual({ claude: "Team" })
+  })
+
+  it("shows the base account label without treating it as an extra account", () => {
+    const plugins: PluginMeta[] = [
+      { id: "claude", name: "Claude", iconUrl: "", lines: [], primaryCandidates: [] },
+    ]
+    const settings = normalizePluginSettings(
+      {
+        order: ["claude", "claude:work"],
+        disabled: [],
+        providerInstances: { "claude:work": { baseProviderId: "claude", label: "Work" } },
+        providerLabels: { claude: "Team" },
+      },
+      plugins,
+    )
+    expect(getProviderDisplayName("claude", settings, plugins)).toBe("Claude (Team)")
+    expect(getProviderInstanceMeta("claude", settings, plugins)).toMatchObject({
+      name: "Claude (Team)",
+      displayLabel: "Team",
+      instanceLabel: undefined,
+    })
+    expect(getProviderDisplayName("claude:work", settings, plugins)).toBe("Claude (Work)")
+    expect(getProviderDisplayName("claude", { ...settings, providerLabels: {} }, plugins)).toBe("Claude")
+  })
+
   it("normalizes trayLines: strips __NONE__ when mixed with real labels", () => {
     const plugins: PluginMeta[] = [
       { id: "cursor", name: "Cursor", iconUrl: "", lines: [], primaryCandidates: [] },
@@ -351,6 +390,7 @@ describe("settings", () => {
           codex: ["__NONE__"],
         },
         providerInstances: { "claude:personal": { baseProviderId: "claude", label: "Personal" } },
+        providerLabels: { claude: "Team" },
       },
       plugins,
     )
@@ -362,7 +402,9 @@ describe("settings", () => {
       plugins,
     )
     expect(startup.trayLines).toEqual(stored.trayLines)
+    expect(startup.providerLabels).toEqual({ claude: "Team" })
     expect(arePluginSettingsEqual(migrated, startup)).toBe(true)
+    expect(arePluginSettingsEqual(startup, { ...startup, providerLabels: { claude: "Other" } })).toBe(false)
   })
 
   it("sorts providers alphabetically by display name", () => {

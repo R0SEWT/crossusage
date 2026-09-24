@@ -77,6 +77,7 @@ describe("useSettingsPluginList", () => {
         id: "claude:work",
         baseProviderId: "claude",
         instanceLabel: "Work",
+        displayLabel: "Work",
         name: "Claude (Work)",
         enabled: true,
         primaryCandidates: ["Usage"],

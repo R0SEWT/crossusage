@@ -28,6 +28,8 @@ export type PluginSettings = {
   disabled: string[];
   trayLines?: Record<string, string[]>;
   providerInstances?: Record<string, ProviderInstanceSettings>;
+  /** Optional display label for a base provider's own account (e.g. `claude`), keyed by base provider id. */
+  providerLabels?: Record<string, string>;
 };
 
 export type AutoUpdateIntervalMinutes = 5 | 15 | 30 | 60;
@@ -268,6 +270,9 @@ export async function loadPluginSettings(): Promise<PluginSettings> {
       stored.providerInstances && typeof stored.providerInstances === "object"
         ? stored.providerInstances
         : {},
+    ...(stored.providerLabels && typeof stored.providerLabels === "object"
+      ? { providerLabels: stored.providerLabels }
+      : {}),
   };
 }
 
@@ -423,7 +428,20 @@ export function normalizePluginSettings(
     plugins
   );
 
-  return { order: sortedOrder, disabled, trayLines, providerInstances };
+  const providerLabels: Record<string, string> = {};
+  for (const [baseProviderId, rawLabel] of Object.entries(settings.providerLabels ?? {})) {
+    if (!knownBaseSet.has(baseProviderId) || typeof rawLabel !== "string") continue;
+    const label = rawLabel.trim();
+    if (label) providerLabels[baseProviderId] = label;
+  }
+
+  return {
+    order: sortedOrder,
+    disabled,
+    trayLines,
+    providerInstances,
+    ...(Object.keys(providerLabels).length > 0 ? { providerLabels } : {}),
+  };
 }
 
 /**
@@ -500,6 +518,16 @@ export function arePluginSettingsEqual(
     const key = aInstanceKeys[i];
     if (aInstances[key]?.baseProviderId !== bInstances[key]?.baseProviderId) return false;
     if (aInstances[key]?.label !== bInstances[key]?.label) return false;
+  }
+
+  const aLabels = a.providerLabels || {};
+  const bLabels = b.providerLabels || {};
+  const aLabelKeys = Object.keys(aLabels).sort();
+  const bLabelKeys = Object.keys(bLabels).sort();
+  if (aLabelKeys.length !== bLabelKeys.length) return false;
+  for (let i = 0; i < aLabelKeys.length; i += 1) {
+    if (aLabelKeys[i] !== bLabelKeys[i]) return false;
+    if (aLabels[aLabelKeys[i]] !== bLabels[bLabelKeys[i]]) return false;
   }
 
   return true;
@@ -686,6 +714,13 @@ export function getProviderInstanceLabel(instanceId: string, settings: PluginSet
   return settings?.providerInstances?.[instanceId]?.label ?? null;
 }
 
+/** Label shown next to the provider name: the extra account's label, or the base account's optional label. */
+export function getProviderDisplayLabel(instanceId: string, settings: PluginSettings | null): string | null {
+  const baseProviderId = getBaseProviderId(instanceId, settings);
+  if (instanceId === baseProviderId) return settings?.providerLabels?.[baseProviderId] ?? null;
+  return getProviderInstanceLabel(instanceId, settings);
+}
+
 export function getProviderDisplayName(
   instanceId: string,
   settings: PluginSettings | null,
@@ -693,8 +728,8 @@ export function getProviderDisplayName(
 ): string {
   const baseProviderId = getBaseProviderId(instanceId, settings);
   const baseName = plugins.find((plugin) => plugin.id === baseProviderId)?.name ?? baseProviderId;
-  const label = getProviderInstanceLabel(instanceId, settings);
-  if (!label || instanceId === baseProviderId) return baseName;
+  const label = getProviderDisplayLabel(instanceId, settings);
+  if (!label) return baseName;
   return `${baseName} (${label})`;
 }
 
@@ -712,6 +747,7 @@ export function getProviderInstanceMeta(
     id: instanceId,
     baseProviderId,
     instanceLabel: label,
+    displayLabel: getProviderDisplayLabel(instanceId, settings) ?? undefined,
     name: getProviderDisplayName(instanceId, settings, plugins),
   };
 }

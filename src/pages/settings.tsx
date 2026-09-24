@@ -519,11 +519,9 @@ function SortablePluginItem({
                 Add account
               </Button>
             )}
-            {plugin.instanceLabel && (
-              <Button type="button" variant="outline" size="xs" onClick={() => onRenameAccount(plugin.id)}>
-                Rename
-              </Button>
-            )}
+            <Button type="button" variant="outline" size="xs" onClick={() => onRenameAccount(plugin.id)}>
+              Rename
+            </Button>
             {plugin.instanceLabel && (
               <Button type="button" variant="outline" size="xs" onClick={() => onRemoveAccount(plugin.id)}>
                 Remove account
@@ -1450,19 +1448,22 @@ export function SettingsPage({
       mode: "rename",
       id,
       providerName: plugin.name,
-      label: plugin.instanceLabel ?? plugin.name,
+      label: plugin.instanceLabel ?? plugin.displayLabel ?? "",
     });
   };
 
   const submitAccountForm = () => {
     if (!accountForm) return;
     const label = accountForm.label.trim();
-    if (!label) return;
     if (accountForm.mode === "rename") {
+      // Extra accounts need a label; a base account's label is optional (empty clears it).
+      const isBaseAccount = !plugins.find((item) => item.id === accountForm.id)?.instanceLabel;
+      if (!label && !isBaseAccount) return;
       onRenameProviderAccount(accountForm.id, label);
       setAccountForm(null);
       return;
     }
+    if (!label) return;
     const devMock = shouldApplyProviderAccountDevMock();
     const rawAccess = accountForm.accessToken.trim();
     const rawRefresh = accountForm.refreshToken.trim();

@@ -245,7 +245,7 @@ describe("SettingsPage", () => {
     await user.type(screen.getByLabelText("Access token"), "updated-token")
     await user.click(screen.getByRole("button", { name: "Save" }))
 
-    await user.click(screen.getByRole("button", { name: "Rename" }))
+    await user.click(screen.getAllByRole("button", { name: "Rename" })[1])
     await user.clear(screen.getByLabelText("Account label"))
     await user.type(screen.getByLabelText("Account label"), "Personal")
     await user.click(screen.getByRole("button", { name: "Save" }))
@@ -266,6 +266,38 @@ describe("SettingsPage", () => {
     })
     expect(onRenameProviderAccount).toHaveBeenCalledWith("claude:work", "Personal")
     expect(onRemoveProviderAccount).toHaveBeenCalledWith("claude:work")
+  })
+
+  it("renames the base account with an optional label", async () => {
+    const user = userEvent.setup()
+    const onRenameProviderAccount = vi.fn()
+    renderSettings({
+      ...defaultProps,
+      plugins: [
+        {
+          id: "claude",
+          baseProviderId: "claude",
+          displayLabel: "Team",
+          name: "Claude (Team)",
+          enabled: true,
+          primaryCandidates: [],
+          trayReadoutLabels: [],
+          trayLines: [],
+        },
+      ],
+      onRenameProviderAccount,
+    })
+
+    // Base rows keep Add account and never offer Remove account.
+    expect(screen.getByRole("button", { name: "Add account" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Remove account" })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Rename" }))
+    expect(screen.getByLabelText("Account label")).toHaveValue("Team")
+    await user.clear(screen.getByLabelText("Account label"))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(onRenameProviderAccount).toHaveBeenCalledWith("claude", "")
   })
 
   it("opens GitHub tutorial when adding a Claude account", async () => {

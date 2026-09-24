@@ -72,6 +72,8 @@ export type PluginMeta = {
   baseProviderId?: string
   /** User-visible account label for instances, e.g. Work or Personal. */
   instanceLabel?: string
+  /** Label shown next to the name: `instanceLabel`, or the base account's optional label. */
+  displayLabel?: string
   name: string
   iconUrl: string
   iconFilePath: string

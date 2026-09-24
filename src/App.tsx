@@ -584,8 +584,21 @@ function App() {
     (id: string, label: string) => {
       if (!pluginSettings) return
       const instance = pluginSettings.providerInstances?.[id]
-      if (!instance) return
       const trimmedLabel = label.trim()
+      if (!instance) {
+        // Base account: display-only label kept in plugin settings; empty clears it.
+        if (!pluginsMeta.some((plugin) => plugin.id === id)) return
+        const providerLabels = { ...(pluginSettings.providerLabels ?? {}) }
+        if (trimmedLabel) providerLabels[id] = trimmedLabel
+        else delete providerLabels[id]
+        const nextSettings = { ...pluginSettings, providerLabels }
+        setPluginSettings(nextSettings)
+        void savePluginSettings(nextSettings).catch((error) => {
+          console.error("Failed to save plugin settings for provider label rename:", error)
+        })
+        scheduleTrayIconUpdate("settings", TRAY_SETTINGS_DEBOUNCE_MS)
+        return
+      }
       if (!trimmedLabel) return
       const nextSettings = {
         ...pluginSettings,
@@ -613,7 +626,7 @@ function App() {
       })
       scheduleTrayIconUpdate("settings", TRAY_SETTINGS_DEBOUNCE_MS)
     },
-    [pluginSettings, scheduleTrayIconUpdate, setPluginSettings]
+    [pluginSettings, pluginsMeta, scheduleTrayIconUpdate, setPluginSettings]
   )
 
   const handleRemoveProviderAccount = useCallback(

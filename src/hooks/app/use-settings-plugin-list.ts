@@ -8,6 +8,7 @@ export type SettingsPluginState = {
   id: string
   baseProviderId: string
   instanceLabel?: string
+  displayLabel?: string
   name: string
   enabled: boolean
   primaryCandidates: string[]
@@ -39,6 +40,7 @@ export function useSettingsPluginList({ pluginSettings, pluginsMeta }: UseSettin
           id,
           baseProviderId: meta.baseProviderId ?? meta.id,
           instanceLabel: meta.instanceLabel,
+          displayLabel: meta.displayLabel,
           name: meta.name,
           enabled: !pluginSettings.disabled.includes(id),
           primaryCandidates,
