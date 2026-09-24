@@ -326,6 +326,45 @@ describe("settings", () => {
     expect(merged.order).toEqual(["cursor", "cursor:work"])
   })
 
+  it("keeps unrelated plugin settings when there is nothing to migrate from Windsurf", () => {
+    const settings = {
+      order: ["claude", "claude:personal"],
+      disabled: ["claude:personal"],
+      trayLines: { claude: ["Session"] },
+      providerInstances: { "claude:personal": { baseProviderId: "claude", label: "Personal" } },
+    }
+    expect(migrateWindsurfToDevin(settings)).toEqual(settings)
+  })
+
+  it("does not rewrite already-normalized settings on startup", () => {
+    const plugins: PluginMeta[] = [
+      { id: "claude", name: "Claude", iconUrl: "", lines: [], primaryCandidates: [] },
+      { id: "codex", name: "Codex", iconUrl: "", lines: [], primaryCandidates: [] },
+    ]
+    const stored = normalizePluginSettings(
+      {
+        order: ["claude", "claude:personal", "codex"],
+        disabled: [],
+        trayLines: {
+          claude: ["Session", "Weekly", "Usage Trend"],
+          "claude:personal": ["Session", "Weekly"],
+          codex: ["__NONE__"],
+        },
+        providerInstances: { "claude:personal": { baseProviderId: "claude", label: "Personal" } },
+      },
+      plugins,
+    )
+    // Same pipeline as useSettingsBootstrap: migrate -> normalize -> merge stored accounts.
+    const migrated = migrateWindsurfToDevin(stored)
+    const startup = mergeStoredProviderAccounts(
+      normalizePluginSettings(migrated, plugins),
+      [{ instanceId: "claude:personal", baseProviderId: "claude", label: "Personal" }],
+      plugins,
+    )
+    expect(startup.trayLines).toEqual(stored.trayLines)
+    expect(arePluginSettingsEqual(migrated, startup)).toBe(true)
+  })
+
   it("sorts providers alphabetically by display name", () => {
     const plugins: PluginMeta[] = [
       { id: "cursor", name: "Cursor", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
