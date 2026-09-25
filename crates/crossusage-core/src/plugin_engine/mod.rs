@@ -65,6 +65,12 @@ fn is_retired_bundled_plugin_id(id: &str) -> bool {
 }
 
 fn find_dev_plugins_dir() -> Option<PathBuf> {
+    // `tauri dev` runs from the repo, so ./plugins is the plugin source. A release
+    // build must not do this: launched from a directory that happens to contain an
+    // unrelated `plugins/` folder (e.g. $HOME), it would load zero providers.
+    if !cfg!(debug_assertions) {
+        return None;
+    }
     let cwd = std::env::current_dir().ok()?;
     let direct = cwd.join("plugins");
     if direct.exists() {
