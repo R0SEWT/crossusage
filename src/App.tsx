@@ -552,7 +552,11 @@ function App() {
       const baseProviderId = getBaseProviderId(id, pluginSettings)
       const base = pluginsMeta.find((plugin) => plugin.id === baseProviderId)
       if (!base) return
-      const label = input.label?.trim() || getProviderInstanceLabel(id, pluginSettings) || base.name
+      const isBase = id === baseProviderId
+      const storedLabel = getProviderInstanceLabel(id, pluginSettings)
+      const label = isBase
+        ? storedLabel || base.name
+        : input.label?.trim() || storedLabel || base.name
       void saveProviderAccountCredentials({
         instanceId: id,
         baseProviderId,

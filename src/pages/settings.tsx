@@ -490,7 +490,7 @@ function SortablePluginItem({
             >
               {plugin.name}
             </span>
-            {plugin.instanceLabel && (
+            {plugin.id !== plugin.baseProviderId && (
               <span className="text-[11px] text-muted-foreground">
                 {plugin.baseProviderId}
               </span>
@@ -1433,12 +1433,19 @@ export function SettingsPage({
     setDevMockSaveNotice(null);
     const plugin = plugins.find((item) => item.id === id);
     if (!plugin) return;
+    const isBase = plugin.id === plugin.baseProviderId;
+    const displayLabel = plugin.instanceLabel;
+    const persistableLabel = isBase
+      ? displayLabel && plugin.name.endsWith(` (${displayLabel})`)
+        ? plugin.name.slice(0, -(displayLabel.length + 3))
+        : plugin.name
+      : (displayLabel ?? plugin.name);
     setAccountForm({
       mode: "credentials",
       id,
       baseProviderId: plugin.baseProviderId,
       providerName: plugin.name,
-      label: plugin.instanceLabel ?? plugin.name,
+      label: persistableLabel,
       accessToken: "",
       refreshToken: "",
       sessionKey: "",

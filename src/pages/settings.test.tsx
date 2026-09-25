@@ -294,6 +294,71 @@ describe("SettingsPage", () => {
     expect(onRenameProviderAccount).toHaveBeenLastCalledWith("claude", "")
   })
 
+  it("does not show the raw provider id under a labeled base account", () => {
+    renderSettings({
+      ...defaultProps,
+      plugins: [
+        {
+          id: "claude",
+          baseProviderId: "claude",
+          instanceLabel: "Work CIP",
+          name: "Claude (Work CIP)",
+          enabled: true,
+          primaryCandidates: [],
+          trayReadoutLabels: [],
+          trayLines: [],
+        },
+        {
+          id: "claude:work",
+          baseProviderId: "claude",
+          instanceLabel: "Work",
+          name: "Claude (Work)",
+          enabled: true,
+          primaryCandidates: [],
+          trayReadoutLabels: [],
+          trayLines: [],
+        },
+      ],
+    })
+
+    expect(screen.getByText("Claude (Work CIP)")).toBeInTheDocument()
+    expect(screen.getByText("Claude (Work)")).toBeInTheDocument()
+    expect(screen.getByText("claude")).toBeInTheDocument()
+    expect(screen.getAllByText("claude")).toHaveLength(1)
+  })
+
+  it("does not prefill credentials with a base display label", async () => {
+    const user = userEvent.setup()
+    const onUpdateProviderAccountCredentials = vi.fn()
+    renderSettings({
+      ...defaultProps,
+      plugins: [
+        {
+          id: "claude",
+          baseProviderId: "claude",
+          instanceLabel: "Work CIP",
+          name: "Claude (Work CIP)",
+          enabled: true,
+          primaryCandidates: [],
+          trayReadoutLabels: [],
+          trayLines: [],
+        },
+      ],
+      onUpdateProviderAccountCredentials,
+    })
+
+    await user.click(screen.getByRole("button", { name: "Set credentials" }))
+    expect(screen.getByLabelText("Account label")).toHaveValue("Claude")
+    await user.type(screen.getByLabelText("Access token"), "tok")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(onUpdateProviderAccountCredentials).toHaveBeenCalledWith("claude", {
+      label: "Claude",
+      accessToken: "tok",
+      refreshToken: "",
+      sessionKey: "",
+    })
+  })
+
   it("opens GitHub tutorial when adding a Claude account", async () => {
     const user = userEvent.setup()
     vi.mocked(openUrl).mockClear()
