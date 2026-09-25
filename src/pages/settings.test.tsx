@@ -245,7 +245,7 @@ describe("SettingsPage", () => {
     await user.type(screen.getByLabelText("Access token"), "updated-token")
     await user.click(screen.getByRole("button", { name: "Save" }))
 
-    await user.click(screen.getByRole("button", { name: "Rename" }))
+    await user.click(screen.getAllByRole("button", { name: "Rename" })[1])
     await user.clear(screen.getByLabelText("Account label"))
     await user.type(screen.getByLabelText("Account label"), "Personal")
     await user.click(screen.getByRole("button", { name: "Save" }))
@@ -266,6 +266,32 @@ describe("SettingsPage", () => {
     })
     expect(onRenameProviderAccount).toHaveBeenCalledWith("claude:work", "Personal")
     expect(onRemoveProviderAccount).toHaveBeenCalledWith("claude:work")
+    expect(screen.getAllByRole("button", { name: "Add account" })).toHaveLength(1)
+    expect(screen.getAllByRole("button", { name: "Remove account" })).toHaveLength(1)
+  })
+
+  it("renames the base account and clears the label when empty", async () => {
+    const user = userEvent.setup()
+    const onRenameProviderAccount = vi.fn()
+    renderSettings({
+      ...defaultProps,
+      plugins: [
+        { id: "claude", baseProviderId: "claude", name: "Claude", enabled: true, primaryCandidates: [], trayReadoutLabels: [], trayLines: [] },
+      ],
+      onRenameProviderAccount,
+    })
+
+    expect(screen.queryByRole("button", { name: "Remove account" })).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Rename" }))
+    expect(screen.getByText("Leave empty to show the provider name only.")).toBeInTheDocument()
+    await user.type(screen.getByLabelText("Account label"), "Work CIP")
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(onRenameProviderAccount).toHaveBeenCalledWith("claude", "Work CIP")
+
+    await user.click(screen.getByRole("button", { name: "Rename" }))
+    await user.clear(screen.getByLabelText("Account label"))
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    expect(onRenameProviderAccount).toHaveBeenLastCalledWith("claude", "")
   })
 
   it("opens GitHub tutorial when adding a Claude account", async () => {
