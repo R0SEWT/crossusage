@@ -14,6 +14,9 @@ base_version="$(python3 -c 'import json;print(json.load(open("package.json"))["v
 version="${base_version}-rody.$(date +%Y%m%d%H%M)"
 echo "==> CrossUsage ${version} ($(git rev-parse --short HEAD))"
 
+# bundle:plugins rewrites tracked plugin files; restore them however the build ends.
+trap 'git checkout -- . 2>/dev/null || true' EXIT
+
 echo "==> bun install (frozen lockfile)"
 bun install --frozen-lockfile >/dev/null
 
@@ -34,9 +37,6 @@ if [[ -z "$deb" ]]; then
   exit 1
 fi
 rm -f "$log"
-
-# bundle:plugins rewrites tracked plugin files; keep the tree clean.
-git checkout -- . 2>/dev/null || true
 
 mkdir -p "$HOME/Downloads"
 out="$HOME/Downloads/$(basename "$deb")"
