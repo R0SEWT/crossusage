@@ -90,6 +90,16 @@ describe("codex plugin", () => {
     expect(usedDefaultFileToken(ctx)).toBe(false)
   })
 
+  it("does not use the default account when an extra account only stored a refresh token", async () => {
+    const ctx = makeAccountCtx({
+      instanceId: "codex:work",
+      credential: { accessToken: null, refreshToken: "work-refresh" },
+    })
+    const plugin = await loadPlugin()
+    expect(() => plugin.probe(ctx)).toThrow("No credentials for this account")
+    expect(usedDefaultFileToken(ctx)).toBe(false)
+  })
+
   it("still falls back to file auth for the default account when its stored credential fails", async () => {
     const ctx = makeAccountCtx({
       instanceId: "codex",
