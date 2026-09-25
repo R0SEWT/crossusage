@@ -209,7 +209,9 @@ export function useSettingsBootstrap({
         } catch (error) {
           console.error("Failed to sync provider accounts into plugin settings:", error)
         }
-        if (!arePluginSettingsEqual(migratedSettings, settings)) {
+        // With no plugins loaded, normalizing drops every provider, account and
+        // metric selection; saving that would wipe the user's settings.
+        if (availablePlugins.length > 0 && !arePluginSettingsEqual(migratedSettings, settings)) {
           await savePluginSettings(settings)
         }
 

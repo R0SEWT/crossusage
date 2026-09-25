@@ -316,6 +316,28 @@ describe("useSettingsBootstrap", () => {
     })
   })
 
+  it("does not overwrite stored settings when no plugins are loaded", async () => {
+    const args = createArgs()
+    const storedSettings = {
+      order: ["codex", "codex:work"],
+      disabled: [],
+      trayLines: { codex: ["Session"] },
+      providerInstances: { "codex:work": { baseProviderId: "codex", label: "Work" } },
+    }
+    invokeMock.mockResolvedValueOnce([])
+    loadPluginSettingsMock.mockResolvedValueOnce(storedSettings)
+    normalizePluginSettingsMock.mockReturnValueOnce({ order: [], disabled: [], trayLines: {}, providerInstances: {} })
+    arePluginSettingsEqualMock.mockReturnValueOnce(false)
+
+    renderHook(() => useSettingsBootstrap(args))
+
+    await waitFor(() => {
+      expect(normalizePluginSettingsMock).toHaveBeenCalledWith(storedSettings, [])
+      expect(args.setPluginSettings).toHaveBeenCalled()
+    })
+    expect(savePluginSettingsMock).not.toHaveBeenCalled()
+  })
+
   it("sets onboarding preference from resolveOnboardingComplete", async () => {
     resolveOnboardingCompleteMock.mockResolvedValueOnce(false)
     const args = createArgs()
