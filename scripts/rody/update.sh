@@ -24,7 +24,7 @@ else
 fi
 
 # Which of our patches has upstream already taken?
-for b in fix/preserve-tray-lines-on-startup feat/base-provider-label fix/codex-account-no-base-fallback; do
+for b in fix/preserve-tray-lines-on-startup feat/base-provider-label fix/codex-account-no-base-fallback fix/no-settings-wipe-without-plugins; do
   git rev-parse -q --verify "$b" >/dev/null || continue
   if git merge-base --is-ancestor "$b" "upstream/$UPSTREAM_BRANCH"; then
     echo "    upstream already has $b"
