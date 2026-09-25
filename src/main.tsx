@@ -5,6 +5,7 @@ import { error as logError, warn as logWarn } from "@tauri-apps/plugin-log";
 import { I18nProvider } from "@/components/i18n-provider";
 import { App } from "./App";
 import "./index.css";
+import "./theme-rody.css";
 import "@/i18n";
 
 // Forward console.error and console.warn to Tauri log file

@@ -20,7 +20,8 @@ interface UseAppUpdateReturn {
 
 /** In Vite dev (`tauri dev`), the updater endpoint often 404s until releases ship `latest.json`. Set `VITE_UPDATER_IN_DEV=true` to test updates locally. Vitest sets `VITE_UPDATER_IN_DEV` via `vite.config.ts` so hook tests still run. */
 const UPDATER_CHECKS_ENABLED =
-  import.meta.env.PROD || import.meta.env.VITE_UPDATER_IN_DEV === "true"
+  import.meta.env.VITE_DISABLE_UPDATER !== "true" &&
+  (import.meta.env.PROD || import.meta.env.VITE_UPDATER_IN_DEV === "true")
 
 export function useAppUpdate(): UseAppUpdateReturn {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ status: "idle" })
