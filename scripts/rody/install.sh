@@ -27,10 +27,17 @@ json.dump(s, open(path, "w"), indent=2)
 EOF
 fi
 
-(setsid /usr/bin/crossusage >/dev/null 2>&1 &)
+# Launch from the install dir like the autostart entry does (Path=/usr/lib/crossusage):
+# older builds treat a plugins/ folder in the cwd as dev plugins (e.g. ~/plugins).
+(cd /usr/lib/crossusage && setsid /usr/bin/crossusage >/dev/null 2>&1 &)
 sleep 8
 if pgrep -x crossusage >/dev/null; then
-  echo "==> CrossUsage $version running"
+  loaded="$(grep -o 'list_plugins: [0-9]* plugins' "$DATA/logs/crossusage.log" | tail -1)"
+  echo "==> CrossUsage $version running ($loaded)"
+  if [[ "$loaded" == "list_plugins: 0 plugins" ]]; then
+    echo "install.sh: loaded 0 plugins — stop the app and restore $DATA/settings.json.bak-install" >&2
+    exit 1
+  fi
 else
   echo "install.sh: CrossUsage did not start; check $DATA/logs/crossusage.log" >&2
   exit 1
