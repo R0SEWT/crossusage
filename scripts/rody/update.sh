@@ -33,5 +33,7 @@ for b in fix/preserve-tray-lines-on-startup fix/no-settings-wipe-without-plugins
   fi
 done
 
-git push -q origin rody
+# The active gh account is the CGIAR one, which gets a 403 on the fork; push as
+# R0SEWT for this command only (an empty token falls back to the active account).
+GH_TOKEN="$(gh auth token --user R0SEWT 2>/dev/null || true)" git push -q origin rody
 [[ "${1:-}" == "--no-build" ]] || exec "$ROOT/scripts/rody/build.sh"
