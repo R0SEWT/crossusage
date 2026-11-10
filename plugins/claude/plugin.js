@@ -13,6 +13,7 @@
   // Rate-limit state persisted across probe() calls (module scope survives re-invocations).
   const MIN_USAGE_FETCH_INTERVAL_MS = 5 * 60 * 1000  // never poll more than once per 5 min
   const DEFAULT_RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000 // fallback when no Retry-After header
+  const RESET_GRANTS_CHECK_INTERVAL_MS = 60 * 60 * 1000 // ask for cedar_ember at most once per hour (#1367)
   let rateLimitedUntilMs = 0  // epoch ms; 0 = not rate-limited
   let lastUsageFetchMs = 0    // epoch ms of the most-recent API attempt
   let cachedUsageData = null  // last successful API response body (parsed JSON)
@@ -21,6 +22,10 @@
   // Live plan from GET /api/oauth/profile: once per access token, including failed lookups (#1262).
   let cachedLivePlan = null
   let cachedLivePlanTokenKey = null
+  // Hourly reset-grants check state (#1367).
+  let resetGrantsLoginKey = null
+  let resetGrantsCheckedAtMs = 0
+  let cachedResetGrantsBlock = null
 
   function utf8DecodeBytes(bytes) {
     // Prefer native TextDecoder when available (QuickJS may not expose it).
@@ -231,6 +236,7 @@
     return {
       baseApiUrl: baseApiUrl,
       usageUrl: baseApiUrl + "/api/oauth/usage",
+      resetGrantsUrl: baseApiUrl + "/api/oauth/usage?cedar_ember=1&skip_spend=1",
       profileUrl: baseApiUrl + "/api/oauth/profile",
       refreshUrl: refreshUrl,
       clientId: clientId,
@@ -533,10 +539,18 @@
       }
 
       // Update oauth credentials
+      const previousLoginKey = credentialLoginKey(ctx, oauth)
       oauth.accessToken = newAccessToken
       if (body.refresh_token) oauth.refreshToken = body.refresh_token
       if (typeof body.expires_in === "number") {
         oauth.expiresAt = Date.now() + body.expires_in * 1000
+      }
+      const nextLoginKey = credentialLoginKey(ctx, oauth)
+      if (cachedUsageLoginKey === previousLoginKey) {
+        cachedUsageLoginKey = nextLoginKey
+      }
+      if (resetGrantsLoginKey === previousLoginKey) {
+        resetGrantsLoginKey = nextLoginKey
       }
 
       // Persist updated credentials back to the same source we read from.
@@ -562,10 +576,57 @@
         Accept: "application/json",
         "Content-Type": "application/json",
         "anthropic-beta": "oauth-2025-04-20",
-        "User-Agent": "claude-code/2.1.69",
+        "User-Agent": "claude-cli/2.1.280 (external, cli)",
       },
       timeoutMs: 10000,
     })
+  }
+
+  function fetchResetGrants(ctx, accessToken) {
+    const oauthConfig = getOauthConfig(ctx)
+    return ctx.util.request({
+      method: "GET",
+      url: oauthConfig.resetGrantsUrl,
+      headers: {
+        Authorization: "Bearer " + accessToken.trim(),
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": "claude-cli/2.1.280 (external, cli)",
+      },
+      timeoutMs: 10000,
+    })
+  }
+
+  function resolveResetGrantsBlock(ctx, accessToken, oauth, data, nowMs) {
+    if (data && data.cedar_ember && typeof data.cedar_ember === "object") {
+      return data.cedar_ember
+    }
+    const loginKey = credentialLoginKey(ctx, oauth)
+    if (resetGrantsLoginKey !== loginKey) {
+      resetGrantsLoginKey = loginKey
+      resetGrantsCheckedAtMs = 0
+      cachedResetGrantsBlock = null
+    }
+    if (resetGrantsCheckedAtMs > 0 && nowMs - resetGrantsCheckedAtMs < RESET_GRANTS_CHECK_INTERVAL_MS) {
+      return cachedResetGrantsBlock
+    }
+    resetGrantsCheckedAtMs = nowMs
+    try {
+      const resp = fetchResetGrants(ctx, accessToken)
+      if (!resp || resp.status < 200 || resp.status >= 300) {
+        ctx.host.log.warn("reset grants lookup failed; retrying in an hour: status=" + String(resp && resp.status))
+        return cachedResetGrantsBlock
+      }
+      const parsed = ctx.util.tryParseJson(resp.bodyText)
+      cachedResetGrantsBlock =
+        parsed && parsed.cedar_ember && typeof parsed.cedar_ember === "object"
+          ? parsed.cedar_ember
+          : null
+    } catch (e) {
+      ctx.host.log.warn("reset grants lookup failed; retrying in an hour: " + String(e))
+    }
+    return cachedResetGrantsBlock
   }
 
   function fetchProfile(ctx, accessToken) {
@@ -1087,6 +1148,33 @@
     return true
   }
 
+  function appendClaudeResetGrants(ctx, block, lines) {
+    if (!block || typeof block !== "object") return
+    let count = 0
+    const expiries = []
+    const now = Date.now()
+    if (block.eligible === true && Array.isArray(block.grants)) {
+      for (let i = 0; i < block.grants.length; i += 1) {
+        const grant = block.grants[i]
+        const left = grant && Number(grant.resets_left)
+        if (!Number.isFinite(left) || left < 1) continue
+        const resets = Math.floor(left)
+        const ends = grant.ends_at ? Date.parse(grant.ends_at) : NaN
+        if (Number.isFinite(ends) && ends <= now) continue
+        count += resets
+        if (Number.isFinite(ends)) {
+          for (let n = 0; n < resets; n += 1) expiries.push(ends)
+        }
+      }
+    }
+    expiries.sort(function (a, b) { return a - b })
+    lines.push(ctx.line.text({
+      label: "Rate Limit Resets",
+      value: count + " available",
+      resetCreditExpiries: expiries.map(function (ms) { return new Date(ms).toISOString() }),
+    }))
+  }
+
   function probe(ctx) {
     const homePath = getClaudeHomeOverride(ctx)
     const creds = loadCredentials(ctx)
@@ -1203,7 +1291,9 @@
           }
           cachedUsageData = data
           rateLimitedUntilMs = 0
-          lookupLivePlan(ctx, creds.oauth.accessToken || accessToken, creds.oauth)
+          const activeToken = creds.oauth.accessToken || accessToken
+          resolveResetGrantsBlock(ctx, activeToken, creds.oauth, data, nowMs)
+          lookupLivePlan(ctx, activeToken, creds.oauth)
         }
         } // end fetch else-branch
       }
@@ -1281,6 +1371,12 @@
         }))
       }
 
+      const resetGrantsBlock =
+        (data && data.cedar_ember && typeof data.cedar_ember === "object"
+          ? data.cedar_ember
+          : null) || cachedResetGrantsBlock
+      appendClaudeResetGrants(ctx, resetGrantsBlock, lines)
+
       if (data.extra_usage && data.extra_usage.is_enabled) {
         const used = data.extra_usage.used_credits
         const limit = data.extra_usage.monthly_limit
@@ -1332,6 +1428,9 @@
     cachedUsageLoginKey = null
     cachedLivePlan = null
     cachedLivePlanTokenKey = null
+    resetGrantsLoginKey = null
+    resetGrantsCheckedAtMs = 0
+    cachedResetGrantsBlock = null
   }
 
   globalThis.__openusage_plugin = { id: "claude", probe, _resetState }

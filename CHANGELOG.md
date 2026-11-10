@@ -4,6 +4,66 @@
 
 ## Unreleased
 
+### New features
+
+- **Perplexity (Windows/Linux)** — paste a perplexity.ai `next-auth` session cookie in **Settings → Providers → Perplexity → Set credentials**; the plugin now reads API credits, per-mode availability and plan from the same REST API the website uses. macOS auto-detect is unchanged. The credentials dialog names the cookie option for Perplexity (#46).
+- **Cursor** — emit `Today`, `Yesterday`, and `Last 30 Days` spend lines from the billing/events daily export so Cursor populates the Modern **Total Spend** card, and explicitly label whether costs are billed on-demand (`csv`) or estimated at API rates (`events`) (#45).
+
+### Bug fixes
+
+- **Antigravity CLI** — restore Gemini session and weekly quota from Google's quota summary with a versioned CLI identity (#48).
+- **Cursor (3.2x+)** — detect `cursor-safe-storage:` ciphertext tokens in `state.vscdb` so they are never sent as Bearer/refresh tokens, and fall back to the plaintext `auth.json` written by `agent login` (Cursor CLI) (#44).
+- **Provider order** — keep the saved provider order on startup instead of re-sorting it alphabetically. Fresh installs use plugin ID order; newly discovered providers append to the saved list (#43).
+
+## 1.6.1
+
+**Theme:** OpenUsage **v0.7.14 + v0.7.15** upstream ports + build speed, dependency, and app size optimizations (PATCH per [docs/VERSIONING.md](docs/VERSIONING.md)). Trackers: [docs/PORT-0.7.14.md](docs/PORT-0.7.14.md), [docs/PORT-0.7.15.md](docs/PORT-0.7.15.md).
+
+### New features
+
+- **Ollama** — read monthly dollar allowance (`balance_usd` / `allowance_usd` / `period`) and **Purchased Credits** from `GET /api/balance`, while keeping legacy session/weekly `remaining_percent` fallback (#1368).
+- **Cursor** — incremental day-by-day spend history via paged `POST /api/dashboard/get-filtered-usage-events` with per-account finished-day cache under `cursor-usage-history/*.json` and CSV fallback (#1373).
+
+### Bug fixes
+
+- **Codex** — map `prolite` → **Pro 100**, `pro` → **Pro 200**, `promax` → **Pro 500** (#1332); update Usage Dashboard link to `https://chatgpt.com/settings/usage` (#1364); price `codex-auto-review` at `$0.00` from `2026-10-06T00:00:00Z` across Codex and Pi scanners (#1354).
+- **Cursor** — prefer structured team usage model pools (`hasModelPools`) over legacy `$20` plan allowance (#1337).
+- **OpenCode Go** — show sub-1% Session reset countdowns and drop untouched 5h placeholder resets (#1340); only treat SQLite `account` table as authoritative over `auth.json` when migration `20260805200742_import_legacy_credentials` is present (#1365).
+- **Claude** — check `Rate Limit Resets` (`cedar_ember=1&skip_spend=1`) hourly instead of every refresh while continuing to prune expired grants locally (#1367).
+- **Pricing** — accept `-n` shorthand for Gemini `none` effort variants (#1371). Supplement `updated_at` **2026-10-12**.
+
+### Performance & size optimizations
+
+- **Rust workspace & dependencies** — reduced workspace crate graph from **843 → 510 crates** (and `tauri:dev` compile steps from **843 → 480 crates**): replaced `tauri-plugin-aptabase` (Tokio/hyper/h2 stack) with a lightweight `reqwest::blocking` event sender including Linux distro/kernel/arch props; gated `tauri-plugin-liquid-glass` to macOS; dropped `rquickjs` `bindgen`, `time`, `users`, `color-eyre`, `textwrap`, `owo-colors`, and unused CLI crates.
+- **Cargo profiles & sidecar build** — added `[profile.release]` (`strip = "symbols"`, `lto = "thin"`, `codegen-units = 1`) and `[profile.dev]` (`debug = 1`), set `src-tauri` `crate-type = ["rlib"]`, and skipped redundant `--target` flag in `prepare-cli-sidecar.sh` on native host builds to share the target cache.
+- **Assets & frontend bundle** — stripped `*.test.js` and `*.md` from bundled/embedded plugins, removed 6.4 MB of unused mobile/macOS icon exports from `src-tauri/icons/`, lazy-loaded non-English i18n locales and secondary views/dialogs, and removed unused `@base-ui/react`.
+
+Skipped: macOS `xswap`/SwiftUI account cards and switcher (#1322, #1338, #1349, #1355), macOS Keychain popup workarounds (#1372, #1379), SwiftUI welcome screen (#1380), and PostHog/Sparkle bumps.
+
+---
+
+## 1.6.0
+
+**Theme:** Fork MINOR — base account label. OpenUsage **v0.7.13** rides along (would be PATCH alone). Tracker: [docs/PORT-0.7.13.md](docs/PORT-0.7.13.md). Also includes fixes merged after 1.5.0.
+
+### New features
+
+- **Pricing** — Claude Sonnet 5.5 and Opus 5.5, GPT-6 Sol / 6.1 Sol / Luna, Grok 4.7 (including `grok-bot-cua`). GPT-5.6 Sol promotional rates. Supplement `updated_at` **2026-09-30**.
+- **Claude** — Rate Limit Resets from `cedar_ember` on the usage request (#1290).
+- **Ollama** — Monthly meter from `limits.monthly` (#1270).
+- **Base account label** — optional display name on the base card (`providerLabels`) (#33).
+
+### Bug fixes
+
+- **Codex** — extra accounts no longer show the default `~/.codex/auth.json` usage when their credential fails or is missing (#34). Ultrafast on GPT-6 Astra is 6x (#1331).
+- **Cursor** — usage CSV download deadline is 20s (#1324).
+- **Grok** — team billing HTTP 412 (“no personal team”) keeps the card and local spend (#1272).
+- **OpenCode Go** — read the API key from OpenCode 2 channel databases when `auth.json` has none (#1323).
+- **Z.ai** — `CREDIT_LIMIT` fills session and weekly when `TOKENS_LIMIT` is absent (#30).
+- **Settings** — Windsurf → Devin migration keeps `trayLines` (#32).
+
+Skipped: Codex Swap, auto one-card-per-Codex-home, PostHog/Sparkle/pullfrog, Swift settings labels. See the port tracker.
+
 ## 1.5.0
 
 **Theme:** Fork MINOR — Gemini Apps. OpenUsage **v0.7.11 + v0.7.12** rides along (would be PATCH alone). Port tracker: [docs/PORT-0.7.11-0.7.12.md](docs/PORT-0.7.11-0.7.12.md).

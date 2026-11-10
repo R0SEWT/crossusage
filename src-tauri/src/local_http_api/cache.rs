@@ -229,9 +229,7 @@ pub fn init(app_data_dir: &Path, known_plugin_ids: Vec<String>) {
 }
 
 pub fn cache_successful_output(output: &PluginOutput) {
-    let fetched_at = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_default();
+    let fetched_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
     let snapshot = CachedPluginSnapshot {
         provider_id: output.provider_id.clone(),

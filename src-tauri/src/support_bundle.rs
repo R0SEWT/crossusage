@@ -39,14 +39,24 @@ pub fn redact_sensitive_text(input: &str) -> String {
         "refresh_token",
         "access_token",
     ] {
-        while let Some(i) = s.find(needle) {
-            let rest = &s[i + needle.len()..];
-            let take = rest
+        let mut search_from = 0;
+        while let Some(rel_i) = s[search_from..].find(needle) {
+            let i = search_from + rel_i;
+            let after_needle = i + needle.len();
+            let rest = &s[after_needle..];
+            let take_bytes: usize = rest
                 .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
-                .count();
-            let end = i + needle.len() + take;
-            s.replace_range(i..end, &format!("{}[REDACTED]", needle));
+                .map(char::len_utf8)
+                .sum();
+            if take_bytes == 0 || rest[take_bytes..].starts_with("[REDACTED]") {
+                search_from = after_needle + take_bytes;
+                continue;
+            }
+            let end = after_needle + take_bytes;
+            let replacement = format!("{}[REDACTED]", needle);
+            s.replace_range(i..end, &replacement);
+            search_from = i + replacement.len();
         }
     }
     s

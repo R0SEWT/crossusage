@@ -1,6 +1,5 @@
 //! Cursor Stable vs Cursor Nightly install paths (separate `state.vscdb` per app).
 
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
@@ -100,14 +99,27 @@ fn read_sqlite_value(db_path: &Path, key: &str) -> Option<String> {
 }
 
 pub fn cursor_state_db_has_auth(db_path: &Path) -> bool {
-    read_sqlite_value(db_path, ACCESS_KEY).is_some()
-        || read_sqlite_value(db_path, REFRESH_KEY).is_some()
+    let readable = |key| read_sqlite_value(db_path, key).is_some_and(|v| !is_encrypted_auth_value(&v));
+    readable(ACCESS_KEY) || readable(REFRESH_KEY)
 }
 
-fn path_has_app_dir(db_path: &Path, app_name: &str) -> bool {
-    db_path
-        .components()
-        .any(|c| c.as_os_str() == OsStr::new(app_name))
+/// Cursor 3.2x+ stores the desktop app's own tokens in `state.vscdb` as
+/// `cursor-safe-storage:v1:<base64>` (Electron `safeStorage`). That is ciphertext,
+/// not a token, and sending it to the API is rejected as "not logged in".
+const ENCRYPTED_AUTH_PREFIX: &str = "cursor-safe-storage:";
+
+pub fn is_encrypted_auth_value(value: &str) -> bool {
+    value.trim_start().starts_with(ENCRYPTED_AUTH_PREFIX)
+}
+
+/// `agent login` (Cursor CLI) writes plaintext `accessToken` / `refreshToken` here,
+/// next to the desktop app's data. It is the readable source when `state.vscdb`
+/// holds ciphertext. Stable Cursor only: the CLI login is not tied to Nightly.
+pub fn resolve_cursor_cli_auth_file() -> Option<PathBuf> {
+    platform_roots()
+        .into_iter()
+        .map(|root| root.join(CursorInstall::Stable.app_dir_name()).join("auth.json"))
+        .find(|p| p.is_file())
 }
 
 #[cfg(test)]
@@ -142,5 +154,14 @@ mod tests {
             Some(CursorInstall::Nightly)
         );
         assert_eq!(CursorInstall::from_plugin_id("claude"), None);
+    }
+
+    #[test]
+    fn detects_cursor_encrypted_auth_values() {
+        assert!(is_encrypted_auth_value("cursor-safe-storage:v1:AAAA"));
+        assert!(is_encrypted_auth_value("  cursor-safe-storage:v1:AAAA"));
+        // A real JWT and an empty value are not ciphertext.
+        assert!(!is_encrypted_auth_value("eyJhbGciOiJIUzI1NiJ9.e30.sig"));
+        assert!(!is_encrypted_auth_value(""));
     }
 }

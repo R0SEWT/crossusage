@@ -7,7 +7,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 describe("ui components", () => {
@@ -129,19 +128,6 @@ describe("ui components", () => {
   it("renders skeleton", () => {
     render(<Skeleton data-testid="skeleton" />)
     expect(screen.getByTestId("skeleton")).toBeInTheDocument()
-  })
-
-  it("renders tabs + content", () => {
-    render(
-      <Tabs value="one">
-        <TabsList variant="line">
-          <TabsTrigger value="one">One</TabsTrigger>
-        </TabsList>
-        <TabsContent value="one">Tab content</TabsContent>
-      </Tabs>
-    )
-    expect(screen.getByText("One")).toBeInTheDocument()
-    expect(screen.getByText("Tab content")).toBeInTheDocument()
   })
 
   it("renders tooltip content when open", () => {

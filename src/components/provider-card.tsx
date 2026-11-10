@@ -696,20 +696,17 @@ function MetricLineRenderer({
       sessionStartSignal: line.sessionStartSignal,
     }
 
-    const resetLabel = line.resetsAt
-      ? resetTimerDisplayMode === "absolute"
+    const resetLabel =
+      resetTimerDisplayMode === "absolute"
         ? formatResetAbsoluteLabel(now, line.resetsAt, timeFormatMode)
         : formatResetRelativeLabel(now, line.resetsAt, resetLineContext)
-      : null
-    const resetTooltipText = line.resetsAt
-      ? formatResetTooltipText({
-          nowMs: now,
-          resetsAtIso: line.resetsAt,
-          visibleMode: resetTimerDisplayMode,
-          timeFormatMode,
-          lineContext: resetLineContext,
-        })
-      : null
+    const resetTooltipText = formatResetTooltipText({
+      nowMs: now,
+      resetsAtIso: line.resetsAt,
+      visibleMode: resetTimerDisplayMode,
+      timeFormatMode,
+      lineContext: resetLineContext,
+    })
 
     const secondaryText =
       resetLabel ??

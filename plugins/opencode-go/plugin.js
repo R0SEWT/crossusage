@@ -3,9 +3,11 @@
   const AUTH_PATH = "~/.local/share/opencode/auth.json";
   const DB_PATH = "~/.local/share/opencode/opencode.db";
   const USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
+  const LEGACY_CREDENTIALS_IMPORT_MIGRATION_ID = "20260805200742_import_legacy_credentials";
   const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
   const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
   const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+  const PLACEHOLDER_RESET_TOLERANCE_MS = 2000;
   const LIMITS = {
     session: 12,
     weekly: 30,
@@ -146,9 +148,9 @@
     return toIso((oldest === null ? nowMs : oldest) + FIVE_HOURS_MS);
   }
 
-  function queryRows(ctx, sql) {
+  function queryRows(ctx, sql, dbPath) {
     try {
-      const raw = ctx.host.sqlite.query(DB_PATH, sql);
+      const raw = ctx.host.sqlite.query(dbPath || DB_PATH, sql);
       const rows = Array.isArray(raw) ? raw : ctx.util.tryParseJson(raw);
       if (!Array.isArray(rows)) {
         ctx.host.log.warn("sqlite query returned non-array result");
@@ -167,23 +169,50 @@
       ctx.host.log.info("api key loaded from provider account")
       return providerKey
     }
-    if (!ctx.host.fs.exists(AUTH_PATH)) return null;
+    const dbResult = loadGoKeyFromDatabases(ctx);
+    if (dbResult.key) return dbResult.key;
+    if (dbResult.imported) return null;
 
-    try {
-      const text = ctx.host.fs.readText(AUTH_PATH);
-      const parsed = ctx.util.tryParseJson(text);
-      if (!parsed || typeof parsed !== "object") {
-        ctx.host.log.warn("opencode auth file is not valid json");
-        return null;
+    if (ctx.host.fs.exists(AUTH_PATH)) {
+      try {
+        const text = ctx.host.fs.readText(AUTH_PATH);
+        const parsed = ctx.util.tryParseJson(text);
+        if (!parsed || typeof parsed !== "object") {
+          ctx.host.log.warn("opencode auth file is not valid json");
+        } else {
+          const entry = parsed[PROVIDER_ID];
+          const key = entry && typeof entry.key === "string" ? entry.key.trim() : "";
+          if (key) return key;
+        }
+      } catch (e) {
+        ctx.host.log.warn("opencode auth read failed: " + String(e));
       }
-      const entry = parsed[PROVIDER_ID];
-      if (!entry || typeof entry !== "object") return null;
-      const key = typeof entry.key === "string" ? entry.key.trim() : "";
-      return key || null;
-    } catch (e) {
-      ctx.host.log.warn("opencode auth read failed: " + String(e));
-      return null;
     }
+    return null;
+  }
+
+  function loadGoKeyFromDatabases(ctx) {
+    const migrationSql =
+      "SELECT 1 AS present FROM migration WHERE id = '" +
+      LEGACY_CREDENTIALS_IMPORT_MIGRATION_ID +
+      "' LIMIT 1";
+    const sql =
+      "SELECT json_extract(value,'$.key') AS key FROM credential WHERE integration_id = 'opencode-go' AND (active IS NULL OR active = 1) ORDER BY active DESC, time_updated DESC, id DESC LIMIT 1";
+    const paths = [DB_PATH, DB_PATH.replace(/opencode\.db$/, "opencode-next.db")];
+    let anyImported = false;
+    for (let i = 0; i < paths.length; i += 1) {
+      if (!ctx.host.fs.exists(paths[i])) continue;
+      const migrationResult = queryRows(ctx, migrationSql, paths[i]);
+      const imported = migrationResult.ok && migrationResult.rows.length > 0;
+      if (imported) anyImported = true;
+      const result = queryRows(ctx, sql, paths[i]);
+      const row = result.ok && result.rows[0];
+      const key = row && (row.key || row["json_extract(value,'$.key')"]);
+      if (typeof key === "string" && key.trim()) {
+        return { imported, key: key.trim() };
+      }
+    }
+    return { imported: anyImported, key: null };
   }
 
   function hasHistory(ctx) {
@@ -272,7 +301,28 @@
     return Math.round(Math.max(0, Math.min(100, n)) * 10) / 10;
   }
 
+  function readHeaderValue(headers, name) {
+    if (!headers || typeof headers !== "object") return null;
+    const target = name.toLowerCase();
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === target && typeof headers[key] === "string") {
+        return headers[key];
+      }
+    }
+    return null;
+  }
+
+  function parseReferenceTimeMs(resp, fallbackMs) {
+    const dateHeader = readHeaderValue(resp && resp.headers, "date");
+    if (dateHeader) {
+      const parsed = Date.parse(dateHeader.trim());
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return fallbackMs;
+  }
+
   function fetchGoMeters(ctx, apiKey) {
+    const capturedAtMs = readNowMs();
     let resp;
     try {
       resp = ctx.host.http.request({
@@ -310,10 +360,11 @@
       throw "OpenCode Go usage API returned an invalid response.";
     }
 
+    const referenceTimeMs = parseReferenceTimeMs(resp, capturedAtMs);
     const windows = [
-      { key: "rolling", label: "Session", periodMs: FIVE_HOURS_MS },
-      { key: "weekly", label: "Weekly", periodMs: WEEK_MS },
-      { key: "monthly", label: "Monthly", periodMs: MONTH_MS },
+      { key: "rolling", label: "Session", periodMs: FIVE_HOURS_MS, dropsPlaceholderReset: true },
+      { key: "weekly", label: "Weekly", periodMs: WEEK_MS, dropsPlaceholderReset: false },
+      { key: "monthly", label: "Monthly", periodMs: MONTH_MS, dropsPlaceholderReset: false },
     ];
     const lines = [];
     for (let i = 0; i < windows.length; i += 1) {
@@ -326,18 +377,33 @@
       if (percent === null) {
         throw "OpenCode Go usage API returned an invalid response.";
       }
-      const resetsAt =
+      const rawResetsAt =
         typeof raw.resetsAt === "string" && raw.resetsAt.trim() ? raw.resetsAt.trim() : null;
-      lines.push(
-        ctx.line.progress({
-          label: spec.label,
-          used: percent,
-          limit: 100,
-          format: { kind: "percent" },
-          resetsAt,
-          periodDurationMs: spec.periodMs,
-        }),
-      );
+      const reportedResetMs = rawResetsAt ? Date.parse(rawResetsAt) : NaN;
+      if (!rawResetsAt || !Number.isFinite(reportedResetMs)) {
+        throw "OpenCode Go usage API returned an invalid response.";
+      }
+      let resetsAt = new Date(reportedResetMs).toISOString();
+      if (spec.dropsPlaceholderReset && percent === 0) {
+        const distanceFromFullPeriodMs = Math.abs(
+          reportedResetMs - referenceTimeMs - spec.periodMs,
+        );
+        if (distanceFromFullPeriodMs <= PLACEHOLDER_RESET_TOLERANCE_MS) {
+          resetsAt = null;
+        }
+      }
+      const progressOpts = {
+        label: spec.label,
+        used: percent,
+        limit: 100,
+        format: { kind: "percent" },
+        resetsAt,
+        periodDurationMs: spec.periodMs,
+      };
+      if (spec.dropsPlaceholderReset) {
+        progressOpts.sessionStartSignal = "missingResetDate";
+      }
+      lines.push(ctx.line.progress(progressOpts));
     }
     return lines;
   }

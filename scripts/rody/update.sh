@@ -24,7 +24,9 @@ else
 fi
 
 # Which of our patches has upstream already taken?
-for b in fix/preserve-tray-lines-on-startup feat/base-provider-label fix/codex-account-no-base-fallback fix/no-settings-wipe-without-plugins; do
+# feat/base-provider-label and fix/codex-account-no-base-fallback left this list
+# in 1.6.x: upstream merged its own versions (#36, #35).
+for b in fix/preserve-tray-lines-on-startup fix/no-settings-wipe-without-plugins; do
   git rev-parse -q --verify "$b" >/dev/null || continue
   if git merge-base --is-ancestor "$b" "upstream/$UPSTREAM_BRANCH"; then
     echo "    upstream already has $b"

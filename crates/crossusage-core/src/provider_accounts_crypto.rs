@@ -229,7 +229,7 @@ fn dbus_session_bus_address() -> Option<String> {
             return Some(trimmed.to_string());
         }
     }
-    let uid = users::get_current_uid();
+    let uid = unsafe { libc::getuid() };
     let bus_path = format!("/run/user/{uid}/bus");
     if std::path::Path::new(&bus_path).exists() {
         return Some(format!("unix:path={bus_path}"));

@@ -46,6 +46,7 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/root"
 cp -f "$BIN" "$CLI" "$STAGE/root/"
 cp -a "$RES" "$STAGE/root/resources"
+rm -f "$STAGE/root/resources/WebView2Loader.dll" "$STAGE/root/resources/WINDOWS-PORTABLE.txt"
 
 OUT="$ROOT/crossusage_${VERSION}_linux_${TAG}.tar.gz"
 rm -f "$OUT"

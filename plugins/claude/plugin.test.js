@@ -23,9 +23,10 @@ beforeEach(() => {
 const loadPlugin = async () => plugin
 
 function usageRequestCount(ctx) {
-  return ctx.host.http.request.mock.calls.filter((call) =>
-    String(call[0]?.url || "").includes("/api/oauth/usage")
-  ).length
+  return ctx.host.http.request.mock.calls.filter((call) => {
+    const url = String(call[0]?.url || "")
+    return url.includes("/api/oauth/usage") && !url.includes("cedar_ember=1")
+  }).length
 }
 
 function profileRequestCount(ctx) {
@@ -1304,7 +1305,8 @@ describe("claude plugin", () => {
     let usageCalls = 0
     let firstUsageHeaders = null
     ctx.host.http.request.mockImplementation((opts) => {
-      if (String(opts.url).includes("/api/oauth/usage")) {
+      const url = String(opts.url || "")
+      if (url.includes("/api/oauth/usage") && !url.includes("cedar_ember=1")) {
         usageCalls += 1
         if (!firstUsageHeaders) firstUsageHeaders = opts.headers
         if (usageCalls === 1) {
@@ -1317,6 +1319,9 @@ describe("claude plugin", () => {
           }),
         }
       }
+      if (url.includes("cedar_ember=1")) {
+        return { status: 200, bodyText: "{}" }
+      }
       // Refresh
       return {
         status: 200,
@@ -1327,7 +1332,12 @@ describe("claude plugin", () => {
     const plugin = await loadPlugin()
     const result = plugin.probe(ctx)
     expect(usageCalls).toBe(2)
-    expect(firstUsageHeaders["User-Agent"]).toBe("claude-code/2.1.69")
+    expect(firstUsageHeaders["User-Agent"]).toBe("claude-cli/2.1.280 (external, cli)")
+    expect(
+      ctx.host.http.request.mock.calls.some((call) =>
+        String(call[0]?.url).includes("cedar_ember=1&skip_spend=1")
+      )
+    ).toBe(true)
     expect(result.lines.find((line) => line.label === "Session")).toBeTruthy()
   })
 
@@ -2310,7 +2320,7 @@ describe("claude plugin", () => {
         ]
         ctx.host.http.request.mockImplementation((opts) => {
           const url = String(opts.url || "")
-          if (url.includes("/api/oauth/profile")) {
+          if (url.includes("/api/oauth/profile") || url.includes("cedar_ember=1")) {
             return { status: 200, headers: {}, bodyText: "{}" }
           }
           const next = usageQueue.shift()
@@ -2366,6 +2376,60 @@ describe("claude plugin", () => {
         vi.setSystemTime(new Date("2026-04-14T10:05:01.000Z"))
         plugin.probe(ctx)
         expect(usageRequestCount(ctx)).toBe(2)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it("polls reset grants at most once an hour per login (#1367)", async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date("2026-04-14T10:00:00.000Z"))
+      try {
+        const ctx = makeCtx()
+        ctx.host.fs.readText = () =>
+          JSON.stringify({ claudeAiOauth: { accessToken: "token", refreshToken: "refresh" } })
+        ctx.host.fs.exists = () => true
+        let resetCalls = 0
+        ctx.host.http.request.mockImplementation((opts) => {
+          const url = String(opts.url || "")
+          if (url.includes("cedar_ember=1&skip_spend=1")) {
+            resetCalls += 1
+            return {
+              status: 200,
+              bodyText: JSON.stringify({
+                cedar_ember: {
+                  eligible: true,
+                  grants: [{ id: "g1", resets_left: 2, ends_at: "2026-04-15T10:00:00.000Z" }],
+                },
+              }),
+            }
+          }
+          if (url.includes("/api/oauth/profile")) {
+            return { status: 200, bodyText: "{}" }
+          }
+          return {
+            status: 200,
+            bodyText: JSON.stringify({
+              five_hour: { utilization: 10, resets_at: "2099-01-01T00:00:00.000Z" },
+            }),
+          }
+        })
+
+        const plugin = await loadPlugin()
+        const r1 = plugin.probe(ctx)
+        expect(resetCalls).toBe(1)
+        expect(r1.lines.find((l) => l.label === "Rate Limit Resets")?.value).toBe("2 available")
+
+        // 10 min later — usage polls again, but reset grants reuses hourly cache
+        vi.setSystemTime(new Date("2026-04-14T10:10:00.000Z"))
+        const r2 = plugin.probe(ctx)
+        expect(resetCalls).toBe(1)
+        expect(r2.lines.find((l) => l.label === "Rate Limit Resets")?.value).toBe("2 available")
+
+        // 61 min later — hourly window elapsed, fetches reset grants again
+        vi.setSystemTime(new Date("2026-04-14T11:01:00.000Z"))
+        plugin.probe(ctx)
+        expect(resetCalls).toBe(2)
       } finally {
         vi.useRealTimers()
       }

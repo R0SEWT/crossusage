@@ -546,9 +546,11 @@
   function formatCodexPlan(ctx, planType) {
     const rawPlan = typeof planType === "string" ? planType.trim() : ""
     if (!rawPlan) return null
-    if (rawPlan.toLowerCase() === "prolite") return "Pro 5x"
-    if (rawPlan.toLowerCase() === "pro") return "Pro 20x"
-    if (rawPlan.toLowerCase() === "self_serve_business_prolite") return "Business Premium"
+    const lower = rawPlan.toLowerCase()
+    if (lower === "prolite") return "Pro 100"
+    if (lower === "pro") return "Pro 200"
+    if (lower === "promax") return "Pro 500"
+    if (lower === "self_serve_business_prolite") return "Business Premium"
     return ctx.fmt.planLabel(rawPlan) || null
   }
 
@@ -1360,9 +1362,6 @@
     }
   }
 
-  // Extra accounts (e.g. codex:work) only have their stored credential. The
-  // file/keychain sources belong to the default account, so falling back to
-  // them would report the default account's usage under this account's card.
   function isExtraAccountInstance(ctx) {
     const account = ctx.account
     return !!(account && account.instanceId && account.baseProviderId &&

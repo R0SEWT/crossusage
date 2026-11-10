@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { useShallow } from "zustand/react/shallow"
 import { LiquidGlassFilter } from "@/components/liquid-glass-filter"
 import { OnboardingWizard } from "@/components/onboarding-wizard"
@@ -75,6 +76,7 @@ export function ModernShell({
   onOnboardingSkip,
   preferWeeklyLimit,
 }: ModernShellProps) {
+  const { t } = useTranslation()
   const [screen, setScreen] = useState<ModernScreen>("dashboard")
   const appVersion = useAppVersion()
   const pollsBadge = useProductPollsBadge(appVersion)
@@ -277,10 +279,10 @@ export function ModernShell({
         >
           {(
             [
-              ["dashboard", "Dashboard"],
-              ["customize", "Customize"],
-              ["polls", "Polls"],
-              ["settings", "Settings"],
+              ["dashboard", t("modern.dashboard")],
+              ["customize", t("modern.customize")],
+              ["polls", t("modern.polls")],
+              ["settings", t("modern.settings")],
             ] as const
           ).map(([id, label]) => (
             <Button

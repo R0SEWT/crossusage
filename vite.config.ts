@@ -16,6 +16,39 @@ export default defineConfig(async () => ({
     },
   },
 
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/react-dom") || id.includes("node_modules/react/") || id.includes("node_modules/zustand")) {
+            return "vendor-react";
+          }
+          if (id.includes("node_modules/@dnd-kit")) {
+            return "vendor-dnd";
+          }
+          if (id.includes("node_modules/lucide-react")) {
+            return "vendor-icons";
+          }
+          if (id.includes("src/i18n/locales/") && !id.endsWith("/en.json")) {
+            return "i18n-locales";
+          }
+          if (
+            id.includes("src/pages/settings.tsx") ||
+            id.includes("src/pages/polls.tsx") ||
+            id.includes("src/components/onboarding-wizard.tsx") ||
+            id.includes("src/components/about-dialog.tsx") ||
+            id.includes("src/components/changelog-dialog.tsx")
+          ) {
+            return "views-secondary";
+          }
+          if (id.includes("src/components/app/modern-shell.tsx") || id.includes("src/components/modern/")) {
+            return "views-modern";
+          }
+        },
+      },
+    },
+  },
+
   test: {
     env: {
       // `use-app-update` skips network checks in Vite dev unless this is set; keep tests exercising the hook.

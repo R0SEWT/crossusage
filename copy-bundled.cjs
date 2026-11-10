@@ -24,7 +24,15 @@ function buildCursorNightlyPlugin() {
 buildCursorNightlyPlugin()
 
 for (const id of plugins) {
-  cpSync(join(srcDir, id), join(dstDir, id), { recursive: true })
+  cpSync(join(srcDir, id), join(dstDir, id), {
+    recursive: true,
+    filter: (src) => {
+      if (src.endsWith(".test.js") || src.endsWith("test-helpers.js") || src.endsWith(".md")) {
+        return false
+      }
+      return true
+    },
+  })
 }
 
 console.log(`Bundled ${plugins.length} plugins: ${plugins.join(", ")}`)

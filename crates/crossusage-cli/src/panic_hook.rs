@@ -36,11 +36,6 @@ fn press_any_key() {
 }
 
 pub fn install() {
-    let _ = color_eyre::config::HookBuilder::default()
-        .display_location_section(true)
-        .display_env_section(false)
-        .install();
-
     let original = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore_terminal();

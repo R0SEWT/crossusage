@@ -18,7 +18,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crossusage_core::paths::{self as cu_paths, ResourceDirResolution};
 use crossusage_core::plugin_engine::runtime::{MetricLine, PluginOutput, ProgressFormat};
 use crossusage_core::plugin_engine::{self, manifest::LoadedPlugin};
-use owo_colors::OwoColorize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -836,14 +835,12 @@ fn print_banner(plain: bool) {
         println!("Upstream OpenUsage (Robin Ebers): https://github.com/robinebers/openusage");
     } else {
         println!(
-            "{} {}",
-            "CrossUsage CLI".bold().cyan(),
-            env!("CARGO_PKG_VERSION").dimmed()
+            "\x1b[1;36mCrossUsage CLI\x1b[0m \x1b[2m{}\x1b[0m",
+            env!("CARGO_PKG_VERSION")
         );
-        println!("{}", "Fork: github.com/barramee27/crossusage".dimmed());
+        println!("\x1b[2mFork: github.com/barramee27/crossusage\x1b[0m");
         println!(
-            "{}",
-            "Upstream: OpenUsage by Robin Ebers — github.com/robinebers/openusage".dimmed()
+            "\x1b[2mUpstream: OpenUsage by Robin Ebers — github.com/robinebers/openusage\x1b[0m"
         );
         println!();
     }
@@ -857,9 +854,9 @@ fn print_plugin_output(out: &PluginOutput, plain: bool) -> Result<()> {
             println!("Plan: {plan}");
         }
     } else {
-        println!("{}", title.bold().green());
+        println!("\x1b[1;32m{title}\x1b[0m");
         if let Some(ref plan) = out.plan {
-            println!("{} {}", "Plan:".dimmed(), plan);
+            println!("\x1b[2mPlan:\x1b[0m {plan}");
         }
     }
 

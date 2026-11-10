@@ -552,7 +552,11 @@ function App() {
       const baseProviderId = getBaseProviderId(id, pluginSettings)
       const base = pluginsMeta.find((plugin) => plugin.id === baseProviderId)
       if (!base) return
-      const label = input.label?.trim() || getProviderInstanceLabel(id, pluginSettings) || base.name
+      const isBase = id === baseProviderId
+      const storedLabel = getProviderInstanceLabel(id, pluginSettings)
+      const label = isBase
+        ? storedLabel || base.name
+        : input.label?.trim() || storedLabel || base.name
       void saveProviderAccountCredentials({
         instanceId: id,
         baseProviderId,
@@ -583,22 +587,22 @@ function App() {
   const handleRenameProviderAccount = useCallback(
     (id: string, label: string) => {
       if (!pluginSettings) return
-      const instance = pluginSettings.providerInstances?.[id]
       const trimmedLabel = label.trim()
-      if (!instance) {
-        // Base account: display-only label kept in plugin settings; empty clears it.
-        if (!pluginsMeta.some((plugin) => plugin.id === id)) return
-        const providerLabels = { ...(pluginSettings.providerLabels ?? {}) }
-        if (trimmedLabel) providerLabels[id] = trimmedLabel
-        else delete providerLabels[id]
-        const nextSettings = { ...pluginSettings, providerLabels }
+      const baseProviderId = getBaseProviderId(id, pluginSettings)
+      if (id === baseProviderId) {
+        const nextLabels = { ...(pluginSettings.providerLabels ?? {}) }
+        if (trimmedLabel) nextLabels[id] = trimmedLabel
+        else delete nextLabels[id]
+        const nextSettings = { ...pluginSettings, providerLabels: nextLabels }
         setPluginSettings(nextSettings)
         void savePluginSettings(nextSettings).catch((error) => {
-          console.error("Failed to save plugin settings for provider label rename:", error)
+          console.error("Failed to save plugin settings for base account label:", error)
         })
         scheduleTrayIconUpdate("settings", TRAY_SETTINGS_DEBOUNCE_MS)
         return
       }
+      const instance = pluginSettings.providerInstances?.[id]
+      if (!instance) return
       if (!trimmedLabel) return
       const nextSettings = {
         ...pluginSettings,
@@ -626,7 +630,7 @@ function App() {
       })
       scheduleTrayIconUpdate("settings", TRAY_SETTINGS_DEBOUNCE_MS)
     },
-    [pluginSettings, pluginsMeta, scheduleTrayIconUpdate, setPluginSettings]
+    [pluginSettings, scheduleTrayIconUpdate, setPluginSettings]
   )
 
   const handleRemoveProviderAccount = useCallback(

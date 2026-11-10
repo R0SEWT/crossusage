@@ -1,6 +1,7 @@
 //! Read decrypted Chromium-family cookies from the local profile Cookies SQLite DB.
 //!
 //! Linux/macOS: OSCrypt `v10`/`v11` AES-128-CBC. Windows DPAPI/`v20` is not supported.
+#![cfg_attr(windows, allow(dead_code, unused_imports))]
 
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
 use pbkdf2::pbkdf2_hmac;
@@ -187,7 +188,7 @@ fn linux_libsecret_password(application: &str) -> Result<String, String> {
             cmd.env("DBUS_SESSION_BUS_ADDRESS", addr);
         }
     } else {
-        let uid = users::get_current_uid();
+        let uid = unsafe { libc::getuid() };
         let bus_path = format!("/run/user/{uid}/bus");
         if Path::new(&bus_path).exists() {
             cmd.env("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={bus_path}"));

@@ -8,13 +8,13 @@ use crate::log_usage_types::{
     warn_unreadable_usage_file,
 };
 use crate::model_pricing::{ModelPricing, default_pricing};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use time::OffsetDateTime;
 
 /// Cap before i32 conversion. Swift uses 1e12; DailyUsageRow tokens are i32.
 const MAXIMUM_PLAUSIBLE_TOKENS: i32 = 1_000_000_000;
@@ -23,7 +23,7 @@ const COST_TICKS_PER_USD: f64 = 10_000_000_000.0;
 #[derive(Clone)]
 struct Entry {
     event_id: Option<String>,
-    timestamp: OffsetDateTime,
+    timestamp: DateTime<Utc>,
     model: String,
     tokens: TokenBreakdown,
     carried_cost: Option<f64>,
@@ -56,27 +56,25 @@ pub fn query_daily_host_json(opts_json: &str) -> String {
     host_query_response(status, daily)
 }
 
-fn parse_since(since: &str) -> OffsetDateTime {
+fn parse_since(since: &str) -> DateTime<Utc> {
     let digits: String = since.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() >= 8 {
         if let (Ok(y), Ok(m), Ok(d)) = (
             digits[0..4].parse::<i32>(),
-            digits[4..6].parse::<u8>(),
-            digits[6..8].parse::<u8>(),
+            digits[4..6].parse::<u32>(),
+            digits[6..8].parse::<u32>(),
         ) {
-            if let Ok(month) = time::Month::try_from(m) {
-                if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
-                    return date.with_hms(0, 0, 0).expect("midnight").assume_utc();
-                }
+            if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
+                return date.and_hms_opt(0, 0, 0).expect("midnight").and_utc();
             }
         }
     }
     since_local_midnight(30)
 }
 
-fn days_back_from_since(since: OffsetDateTime) -> i32 {
-    let now = OffsetDateTime::now_utc();
-    ((now.date() - since.date()).whole_days().max(0) + 1) as i32
+fn days_back_from_since(since: DateTime<Utc>) -> i32 {
+    let now = Utc::now();
+    ((now.date_naive() - since.date_naive()).num_days().max(0) + 1) as i32
 }
 
 fn scan(
@@ -139,11 +137,11 @@ fn collect_updates(dir: &Path, out: &mut Vec<DiscoveredFile>) {
 
 /// Child sessions can contain usage absent from their coordinator. Include every
 /// `updates.jsonl`; event-id+model dedup drops replayed turns, not session kind.
-fn file_mtime_before(mtime: &SystemTime, since: OffsetDateTime) -> bool {
+fn file_mtime_before(mtime: &SystemTime, since: DateTime<Utc>) -> bool {
     let Ok(duration) = mtime.duration_since(SystemTime::UNIX_EPOCH) else {
         return false;
     };
-    let Ok(file_dt) = OffsetDateTime::from_unix_timestamp(duration.as_secs() as i64) else {
+    let Some(file_dt) = DateTime::<Utc>::from_timestamp(duration.as_secs() as i64, 0) else {
         return false;
     };
     file_dt < since
@@ -252,20 +250,20 @@ fn json_number(v: Option<&Value>) -> Option<f64> {
         .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
-fn timestamp_in(object: &Value, params: Option<&Value>) -> Option<OffsetDateTime> {
+fn timestamp_in(object: &Value, params: Option<&Value>) -> Option<DateTime<Utc>> {
     for meta in [params.and_then(|p| p.get("_meta")), object.get("_meta")] {
         if let Some(ms) =
             json_number(meta.and_then(|m| m.get("agentTimestampMs"))).filter(|n| *n > 0.0)
-            && let Ok(dt) = OffsetDateTime::from_unix_timestamp_nanos((ms * 1_000_000.0) as i128)
         {
-            return Some(dt);
+            let nanos = (ms * 1_000_000.0) as i64;
+            return Some(DateTime::<Utc>::from_timestamp_nanos(nanos));
         }
     }
     match object.get("timestamp") {
-        Some(Value::Number(_)) => OffsetDateTime::from_unix_timestamp(
+        Some(Value::Number(_)) => DateTime::<Utc>::from_timestamp(
             json_number(object.get("timestamp")).filter(|n| *n > 0.0)? as i64,
-        )
-        .ok(),
+            0,
+        ),
         Some(Value::String(s)) => parse_iso_timestamp(s.trim()),
         _ => None,
     }
@@ -294,7 +292,7 @@ struct DayAcc {
 
 fn aggregate(
     entries: &[Entry],
-    since: OffsetDateTime,
+    since: DateTime<Utc>,
     pricing: &ModelPricing,
 ) -> Vec<DailyUsageRow> {
     let mut days: BTreeMap<String, DayAcc> = BTreeMap::new();
@@ -449,9 +447,7 @@ mod tests {
     fn includes_subagent_and_forked_ledgers() {
         let tmp = tempfile::TempDir::new().unwrap();
         let sessions = tmp.path().join("sessions");
-        let ts = OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
+        let ts = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let line = format!(
             r#"{{"timestamp":"{ts}","params":{{"update":{{"sessionUpdate":"turn_completed","usage":{{"modelUsage":{{"grok-build":{{"inputTokens":100,"outputTokens":0,"costUsdTicks":1000000000}}}}}}}}}}}}"#
         );

@@ -6,13 +6,13 @@ use crate::log_usage_types::{
     since_local_midnight, warn_unreadable_usage_file,
 };
 use crate::model_pricing::{ModelPricing, default_pricing};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
-use time::OffsetDateTime;
 
 static FILE_CACHE: Mutex<Option<HashMap<String, CachedFile>>> = Mutex::new(None);
 
@@ -24,7 +24,7 @@ struct CachedFile {
 
 #[derive(Clone)]
 struct ClaudeEntry {
-    timestamp: OffsetDateTime,
+    timestamp: DateTime<Utc>,
     tokens: TokenBreakdown,
     message_id: Option<String>,
     request_id: Option<String>,
@@ -61,30 +61,25 @@ pub fn query_daily_host_json(opts_json: &str) -> String {
     host_query_response(status, daily)
 }
 
-fn parse_since(since: &str) -> OffsetDateTime {
+fn parse_since(since: &str) -> DateTime<Utc> {
     let digits: String = since.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() >= 8 {
         if let (Ok(y), Ok(m), Ok(d)) = (
             digits[0..4].parse::<i32>(),
-            digits[4..6].parse::<u8>(),
-            digits[6..8].parse::<u8>(),
+            digits[4..6].parse::<u32>(),
+            digits[6..8].parse::<u32>(),
         ) {
-            if let Ok(month) = time::Month::try_from(m) {
-                if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
-                    return date
-                        .with_hms(0, 0, 0)
-                        .expect("midnight")
-                        .assume_utc();
-                }
+            if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
+                return date.and_hms_opt(0, 0, 0).expect("midnight").and_utc();
             }
         }
     }
     since_local_midnight(30)
 }
 
-fn days_back_from_since(since: OffsetDateTime) -> i32 {
-    let now = OffsetDateTime::now_utc();
-    ((now.date() - since.date()).whole_days().max(0) + 1) as i32
+fn days_back_from_since(since: DateTime<Utc>) -> i32 {
+    let now = Utc::now();
+    ((now.date_naive() - since.date_naive()).num_days().max(0) + 1) as i32
 }
 
 fn scan(days_back: i32, home_path: Option<&str>, pricing: &ModelPricing) -> Option<Vec<DailyUsageRow>> {
@@ -247,11 +242,11 @@ fn walk_jsonl(dir: &Path, out: &mut Vec<DiscoveredFile>) {
     }
 }
 
-fn file_mtime_before(mtime: &SystemTime, since: OffsetDateTime) -> bool {
+fn file_mtime_before(mtime: &SystemTime, since: DateTime<Utc>) -> bool {
     let Ok(duration) = mtime.duration_since(SystemTime::UNIX_EPOCH) else {
         return false;
     };
-    let Ok(file_dt) = OffsetDateTime::from_unix_timestamp(duration.as_secs() as i64) else {
+    let Some(file_dt) = DateTime::<Utc>::from_timestamp(duration.as_secs() as i64, 0) else {
         return false;
     };
     file_dt < since
@@ -465,8 +460,8 @@ fn has_unsupported_null_field(object: &Value, message: &Value, usage: &Value) ->
         || USAGE_FIELDS.iter().any(|f| is_null(usage, f))
 }
 
-pub fn parse_iso_timestamp(raw: &str) -> Option<OffsetDateTime> {
-    time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339).ok()
+pub fn parse_iso_timestamp(raw: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw).ok().map(|dt| dt.with_timezone(&Utc))
 }
 
 #[derive(Hash, PartialEq, Eq)]
@@ -532,7 +527,7 @@ fn should_replace(candidate: &ClaudeEntry, existing: &ClaudeEntry) -> bool {
     candidate.has_speed && !existing.has_speed
 }
 
-fn aggregate(entries: &[ClaudeEntry], since: OffsetDateTime, pricing: &ModelPricing) -> Vec<DailyUsageRow> {
+fn aggregate(entries: &[ClaudeEntry], since: DateTime<Utc>, pricing: &ModelPricing) -> Vec<DailyUsageRow> {
     let mut tokens_by_day: BTreeMap<String, i32> = BTreeMap::new();
     let mut cost_by_day: BTreeMap<String, f64> = BTreeMap::new();
     let mut priced_days: HashSet<String> = HashSet::new();
@@ -640,9 +635,7 @@ mod tests {
         let log = projects.join("sess.jsonl");
         let line = format!(
             r#"{{"timestamp":"{}","message":{{"id":"m1","model":"claude-sonnet-4-20250514","usage":{{"input_tokens":100,"output_tokens":50}}}},"requestId":"r1","version":"1.0.0"}}"#,
-            OffsetDateTime::now_utc()
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap()
+            Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         );
         let mut f = fs::File::create(&log).unwrap();
         writeln!(f, "{line}").unwrap();

@@ -8,12 +8,12 @@ use crate::log_usage_types::{
     local_day_key_from_offset, since_local_midnight, warn_unreadable_usage_file,
 };
 use crate::model_pricing::{ModelPricing, default_pricing};
+use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{Connection, OpenFlags, params};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use time::OffsetDateTime;
 
 pub const MAXIMUM_BLOB_BYTES: i64 = 1_048_576;
 const BATCH_SIZE: i64 = 8;
@@ -42,27 +42,25 @@ pub fn query_daily_host_json(opts_json: &str) -> String {
     host_query_response(status, daily)
 }
 
-fn parse_since(since: &str) -> OffsetDateTime {
+fn parse_since(since: &str) -> DateTime<Utc> {
     let digits: String = since.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() >= 8 {
         if let (Ok(y), Ok(m), Ok(d)) = (
             digits[0..4].parse::<i32>(),
-            digits[4..6].parse::<u8>(),
-            digits[6..8].parse::<u8>(),
+            digits[4..6].parse::<u32>(),
+            digits[6..8].parse::<u32>(),
         ) {
-            if let Ok(month) = time::Month::try_from(m) {
-                if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
-                    return date.with_hms(0, 0, 0).expect("midnight").assume_utc();
-                }
+            if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
+                return date.and_hms_opt(0, 0, 0).expect("midnight").and_utc();
             }
         }
     }
     since_local_midnight(30)
 }
 
-fn days_back_from_since(since: OffsetDateTime) -> i32 {
-    let now = OffsetDateTime::now_utc();
-    ((now.date() - since.date()).whole_days().max(0) + 1) as i32
+fn days_back_from_since(since: DateTime<Utc>) -> i32 {
+    let now = Utc::now();
+    ((now.date_naive() - since.date_naive()).num_days().max(0) + 1) as i32
 }
 
 fn conversations_dirs(home_path: Option<&str>) -> Vec<PathBuf> {
@@ -219,7 +217,7 @@ fn i32_tokens(n: i64) -> Option<i32> {
 
 fn aggregate(
     events: &[GenerationEvent],
-    since: OffsetDateTime,
+    since: DateTime<Utc>,
     pricing: &ModelPricing,
 ) -> Vec<DailyUsageRow> {
     let mut tokens_by_day: BTreeMap<String, i32> = BTreeMap::new();
@@ -230,7 +228,7 @@ fn aggregate(
     let mut cache_read_by_day: BTreeMap<String, i32> = BTreeMap::new();
 
     for event in events {
-        let Ok(ts) = OffsetDateTime::from_unix_timestamp(event.timestamp_seconds) else {
+        let Some(ts) = DateTime::<Utc>::from_timestamp(event.timestamp_seconds, 0) else {
             continue;
         };
         if ts < since {
@@ -355,7 +353,7 @@ mod tests {
         let conv = tmp.path().join(".gemini/antigravity-cli/conversations");
         fs::create_dir_all(&conv).unwrap();
         let db = conv.join("sess.db");
-        let now = OffsetDateTime::now_utc().unix_timestamp() as u64;
+        let now = Utc::now().timestamp() as u64;
         let priced = encode_generation_blob("gemini-3.6-flash", 10, 90, 40, 5, now);
         let unknown = encode_generation_blob("___unset_antigravity_model___", 1, 1, 1, 0, now);
         assert!(default_pricing().can_price("gemini-3.6-flash"));
@@ -386,7 +384,7 @@ mod tests {
         let ide = tmp.path().join(".gemini/antigravity/conversations");
         fs::create_dir_all(&cli).unwrap();
         fs::create_dir_all(&ide).unwrap();
-        let now = OffsetDateTime::now_utc().unix_timestamp() as u64;
+        let now = Utc::now().timestamp() as u64;
         seed_db(
             &cli.join("cli.db"),
             &[(1, Some(encode_generation_blob("gemini-3.6-flash", 10, 90, 40, 5, now)))],

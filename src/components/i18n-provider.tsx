@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { I18nextProvider } from "react-i18next"
-import i18n from "@/i18n"
+import i18n, { ensureLocaleLoaded } from "@/i18n"
 import { resolveUiLocale } from "@/i18n/locale-meta"
 import { prefetchExchangeRates } from "@/lib/exchange-rates"
 import { setLocaleFormatContext } from "@/lib/locale-format"
@@ -15,8 +15,8 @@ function LocaleFormatSync() {
 
   useEffect(() => {
     const lng = resolveUiLocale(appLocale)
-    void i18n.changeLanguage(lng)
     document.documentElement.lang = lng
+    void ensureLocaleLoaded(lng).then(() => i18n.changeLanguage(lng))
   }, [appLocale])
 
   useEffect(() => {

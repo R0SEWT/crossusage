@@ -1,5 +1,49 @@
 # Breadcrumbs
 
+## 2026-11-04
+
+- Antigravity CLI quota summary: an unversioned client identity returned only third-party buckets on a live Google account. A versioned CLI identity (`antigravity/cli/1.5.0`) restored Gemini session and weekly buckets in both `plugins/antigravity-cli/plugin.js` (#49) and the `probeAgyCloudCode` fallback in `plugins/antigravity/plugin.js`. The plugin tests assert the header, and a live probe verified the returned buckets on one account.
+
+## 2026-11-02
+
+- JetBrains AI Assistant live quota fix (#41): added multi-source probing to `plugins/jetbrains-ai-assistant/plugin.js` — Tier 1 live IDE JSON-RPC (`~/.junie/instances/*.json` → `http://127.0.0.1:<port>/rpc` `JunieSystemService.getQuotaInfo`), Tier 2 Junie CLI / Grazzio cloud API (`~/.junie/secure_credentials.json` or `junie-cli` keychain → `GET https://ingrazzio-cloud-prod.labs.jb.gg/auth/test` + OAuth refresh), Tier 3 Junie CLI session logs (`~/.junie/sessions/*/events.jsonl`), Tier 4 IDE `idea.log` (`QuotaManager2Impl`), and Tier 5 `AIAssistantQuotaManager2.xml` fallback; added `username`, `rpc_token`, `simpleToken` redaction in `host_api.rs`.
+- Reviewed and merged PRs #43, #44, #45, and #46 onto `feat/linux-windows-native-support`.
+- Post-merge polish: updated `cursor_state_db_has_auth` to ignore `cursor-safe-storage:` ciphertext; allowed `cursor_usage_export` (`fetch_cursor_month_to_date_totals_uncached`, `download_cursor_usage_csv_for_plugin`, `fetch_cursor_usage_rows_via_events`) to authenticate via Cursor CLI `auth.json` even when `state.vscdb` is absent; formatted underscore-separated Perplexity `subscription_tier` values (e.g. `enterprise_pro` → `Enterprise Pro`); and extended `redact_body` JWT regex in `host_api.rs` to redact 5-segment JWE tokens (such as `next-auth` session cookies).
+
+## 2026-11-01
+
+- Provider order: startup normalization preserves saved order instead of alphabetically sorting every launch. Regression coverage includes custom provider orders, disabled entries, and newly discovered providers. Modern dashboard and Customize both use plugins.order; modernLayout.providerOrder is legacy state.
+- `feat/perplexity-cookie-auth`: Perplexity on Windows/Linux via a pasted session cookie. `plugins/perplexity/plugin.js` gets `probeViaCookie` (cookie-shape detection, `fetchWebJson`, `buildCookieHeader`); `probe()` tries it first and falls back to the unchanged macOS cache path. Docs (`docs/providers/perplexity.md`, `multi-account-credentials.md`) and the credentials-dialog placeholder/hint in `settings.tsx` updated. Verified live on Windows against a real account: `rate-limit/status`, `billing/credits`, `api/auth/session` all 200, no Cloudflare challenge. 13 new tests in `plugin.test.js`.
+- Checked `host_api.rs` redaction per AGENTS.md: request headers (including the new `Cookie`) are never logged, only the redacted URL and redacted response body. No redaction-list changes needed.
+- Run `npx tsc --noEmit` before pushing UI changes: vitest does not typecheck, and a redundant `form.mode !== "rename"` inside the `!isRename` branch passed all tests but failed `tsc`.
+- Open finding, not fixed here: `redact_body`'s JWT regex expects 3 dot-separated segments; `next-auth` cookies are JWE (5 segments, empty 2nd). A JWE appearing in a response body would not be redacted. Perplexity response bodies carry no token, so this PR is unaffected; worth its own issue.
+
+## 2026-10-19
+
+- Resolved Grok Bot QA notes and CI checks on PR #40: added `crates/crossusage-cli/build.rs` so `embedded_plugins.rs` stages filtered runtime plugins into `$OUT_DIR/bundled_plugins` without requiring `copy-bundled.cjs` first; auto-created the dev CLI sidecar stub in `scripts/tauri-before-dev.cjs` for clean checkouts; localized the Modern top navigation tabs (`dashboard`, `customize`, `polls`, `settings`) in `modern-shell.tsx` across all 13 locales; fixed `cursorPaths.resolveStateDb` zero-argument arity in `host_api.rs`; and silenced Windows dead-code warnings in `chromium_cookies.rs`.
+- Ported OpenUsage **v0.7.15** onto `perf/optimize-build-and-size` and bumped CrossUsage to **1.6.1** (PATCH): Codex dashboard link (`chatgpt.com/settings/usage`), Gemini `-n` effort pricing alias, Codex `codex-auto-review` $0 cost since Oct 6 2026, OpenCode Go `20260805200742_import_legacy_credentials` migration check, Ollama `/api/balance` dollar allowance + `Purchased Credits`, Claude `Rate Limit Resets` hourly throttling, and Cursor paged `get-filtered-usage-events` incremental day-by-day history cache (`docs/PORT-0.7.15.md`).
+- Replaced legacy macOS `screenshot.png` (1.06 MB) with a native Linux CrossUsage 1.6.1 showcase composite (194 KB) displaying the Modern UI Dashboard, Classic UI Overview, and Classic UI Provider Detail views (`#39`).
+
+## 2026-10-16
+
+- Ported OpenUsage **v0.7.14** onto `perf/optimize-build-and-size`: Codex plan names (`Pro 100`, `Pro 200`, `Pro 500`), Cursor team model pool preference over legacy $20 allowance, OpenCode Go sub-1% Session reset countdowns + 5h placeholder reset drop, and `docs/PORT-0.7.14.md`.
+
+## 2026-10-14
+
+- Build/size optimization pass: added `[profile.release]` (`strip = "symbols"`, `lto = "thin"`, `codegen-units = 1`) and `[profile.dev]` (`debug = 1`); set `src-tauri` `crate-type = ["rlib"]`; skipped `--target` in `prepare-cli-sidecar.sh` when native; replaced `tauri-plugin-aptabase` with direct `reqwest::blocking` POST; gated `tauri-plugin-liquid-glass` to macOS; dropped `rquickjs` `bindgen`, `time`, `users`, `color-eyre`, `textwrap`, `owo-colors`, and unused CLI deps; stripped `*.test.js`/`*.md` from bundled plugins and 6.4 MB of unused icons; code-split frontend views/locales and dropped `@base-ui/react`.
+
+## 2026-10-05
+
+- Ship number on `feat/port-openusage-0.7.13` is **1.6.0** (MINOR). The base account label sets the bump; the v0.7.13 port rides along.
+
+## 2026-10-04
+
+- Port OpenUsage **v0.7.13** on `feat/port-openusage-0.7.13`. Tracker: [PORT-0.7.13.md](./PORT-0.7.13.md).
+
+## 2026-09-25
+
+- Base provider rows can take a display label (`providerLabels`) via Settings → Rename. Add account stays; Remove stays off the base row.
+
 ## 2026-09-20
 
 - Port OpenUsage **v0.7.11 + v0.7.12** + Gemini Apps → CrossUsage **1.5.0** (MINOR) on `feat/port-openusage-0.7.12`. Pricing supplement 2026-09-11; pace zero-usage; Grok subagent ledgers; Codex Business Premium + gpt-reserve@Luna + Astra; Antigravity sibling conversation stores; Devin exhausted weekly; Claude null nested model + live `/api/oauth/profile`. Tracker: [PORT-0.7.11-0.7.12.md](./PORT-0.7.11-0.7.12.md).
@@ -63,3 +107,4 @@
 - Antigravity CLI quota UI: updated `plugins/antigravity-cli` to call Cloud Code `retrieveUserQuotaSummary` first and expose the same four summary lines as desktop Antigravity; left `antigravity-ide` unchanged.
 - Antigravity quota UI: Cloud Code now uses `retrieveUserQuotaSummary`; manifest and parser expose Gemini session/weekly lines first, then Claude and GPT session/weekly lines.
 - Antigravity Windows auth fix: resolve existing `Antigravity IDE`/legacy paths through `firstExistingAppSupport` (`%APPDATA%` on Windows), skipping nonexistent macOS paths and their SQLite warnings; read `gemini:antigravity` as raw Go-keyring UTF-8 bytes and refresh once after an auth failure.
+

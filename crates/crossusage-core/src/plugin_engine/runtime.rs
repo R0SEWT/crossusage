@@ -672,10 +672,7 @@ fn parse_lines(result: &Object) -> Result<Vec<MetricLine>, String> {
                             if value.is_empty() {
                                 None
                             } else {
-                                let parsed = time::OffsetDateTime::parse(
-                                    &value,
-                                    &time::format_description::well_known::Rfc3339,
-                                );
+                                let parsed = chrono::DateTime::parse_from_rfc3339(&value);
                                 if parsed.is_ok() {
                                     Some(value)
                                 } else {
@@ -687,10 +684,7 @@ fn parse_lines(result: &Object) -> Result<Vec<MetricLine>, String> {
                                         };
                                     if is_missing_tz {
                                         let with_z = format!("{}Z", value);
-                                        let parsed_with_z = time::OffsetDateTime::parse(
-                                            &with_z,
-                                            &time::format_description::well_known::Rfc3339,
-                                        );
+                                        let parsed_with_z = chrono::DateTime::parse_from_rfc3339(&with_z);
                                         if parsed_with_z.is_ok() {
                                             Some(with_z)
                                         } else {

@@ -57,13 +57,14 @@ function setHistoryQuery(ctx, rows, options = {}) {
   });
 }
 
-function setUsageApi(ctx, { status = 200, body } = {}) {
+function setUsageApi(ctx, { status = 200, headers = {}, body } = {}) {
   ctx.host.http.request.mockImplementation((opts) => {
     expect(opts.method).toBe("GET");
     expect(opts.url).toBe("https://opencode.ai/zen/go/v1/usage");
     expect(opts.headers.Authorization).toBe("Bearer go-key");
     return {
       status,
+      headers,
       bodyText: typeof body === "string" ? body : JSON.stringify(body),
     };
   });
@@ -260,5 +261,79 @@ describe("opencode-go plugin", () => {
 
     const plugin = await loadPlugin();
     expect(() => plugin.probe(ctx)).toThrow("No OpenCode Go subscription on this key.");
+  });
+
+  it("drops untouched 5h placeholder reset on Session while keeping sub-1% active reset (#1340)", async () => {
+    const serverDateMs = Date.parse("2026-07-12T12:00:00.000Z");
+    const placeholderIso = new Date(serverDateMs + 5 * 3600 * 1000 + 800).toISOString();
+    const ctx = makeCtx();
+    setAuth(ctx);
+    setUsageApi(ctx, {
+      headers: { date: "Sun, 12 Jul 2026 12:00:00 GMT" },
+      body: {
+        usage: {
+          rolling: { percent: 0, resetsAt: placeholderIso },
+          weekly: { percent: 0, resetsAt: new Date(serverDateMs + 7 * 86400 * 1000).toISOString() },
+          monthly: { percent: 0, resetsAt: new Date(serverDateMs + 30 * 86400 * 1000).toISOString() },
+        },
+      },
+    });
+
+    const plugin = await loadPlugin();
+    const untouched = plugin.probe(ctx);
+    expect(untouched.lines[0].used).toBe(0);
+    expect(untouched.lines[0].resetsAt).toBeUndefined();
+    expect(untouched.lines[0].sessionStartSignal).toBe("missingResetDate");
+    expect(untouched.lines[1].resetsAt).toBeTruthy();
+    expect(untouched.lines[2].resetsAt).toBeTruthy();
+
+    const activeResetIso = new Date(serverDateMs + (5 * 3600 - 30) * 1000).toISOString();
+    setUsageApi(ctx, {
+      headers: { date: "Sun, 12 Jul 2026 12:00:00 GMT" },
+      body: {
+        usage: {
+          rolling: { percent: 0, resetsAt: activeResetIso },
+          weekly: { percent: 1, resetsAt: "2026-07-13T00:00:00.000Z" },
+          monthly: { percent: 0, resetsAt: "2026-08-04T11:18:32.000Z" },
+        },
+      },
+    });
+    const active = plugin.probe(ctx);
+    expect(active.lines[0].used).toBe(0);
+    expect(active.lines[0].resetsAt).toBe(activeResetIso);
+    expect(active.lines[0].sessionStartSignal).toBe("missingResetDate");
+  });
+
+  it("falls back to auth.json when credential table exists before legacy migration (#1358)", async () => {
+    const ctx = makeCtx();
+    ctx.host.fs.writeText("~/.local/share/opencode/opencode.db", "db");
+    setAuth(ctx, "go-key");
+    ctx.host.sqlite.query.mockImplementation((_dbPath, sql) => {
+      if (String(sql).includes("FROM migration")) return JSON.stringify([]);
+      if (String(sql).includes("FROM credential")) return JSON.stringify([]);
+      return JSON.stringify([]);
+    });
+    setUsageApi(ctx, { body: API_USAGE });
+
+    const plugin = await loadPlugin();
+    const result = plugin.probe(ctx);
+    expect(result.plan).toBe("Go");
+    expect(result.lines[0].used).toBe(12.5);
+  });
+
+  it("treats empty credential table as authoritative after legacy import migration (#1358)", async () => {
+    const ctx = makeCtx();
+    ctx.host.fs.writeText("~/.local/share/opencode/opencode.db", "db");
+    setAuth(ctx, "stale-go-key");
+    ctx.host.sqlite.query.mockImplementation((_dbPath, sql) => {
+      if (String(sql).includes("FROM migration")) return JSON.stringify([{ present: 1 }]);
+      if (String(sql).includes("FROM credential")) return JSON.stringify([]);
+      return JSON.stringify([]);
+    });
+
+    const plugin = await loadPlugin();
+    expect(() => plugin.probe(ctx)).toThrow(
+      "OpenCode Go not detected. Log in with OpenCode Go or use it locally first.",
+    );
   });
 });

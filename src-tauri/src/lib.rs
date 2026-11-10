@@ -31,10 +31,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
-use tauri_plugin_aptabase::EventTracker;
 
 /// Aptabase app key (dashboard: https://aptabase.com) — CrossUsage fork analytics.
 const APTABASE_APP_KEY: &str = "A-US-2161452114";
+const APTABASE_API_URL: &str = "https://us.aptabase.com/api/v0/events";
 #[cfg(target_os = "macos")]
 use tauri_plugin_liquid_glass::{GlassMaterialVariant, LiquidGlassConfig, LiquidGlassExt};
 use tauri_plugin_log::{Target, TargetKind};
@@ -161,13 +161,7 @@ fn ensure_crossusage_user_config_file() {
 }
 
 fn today_utc_ymd() -> String {
-    let date = time::OffsetDateTime::now_utc().date();
-    format!(
-        "{:04}-{:02}-{:02}",
-        date.year(),
-        date.month() as u8,
-        date.day()
-    )
+    chrono::Utc::now().format("%Y-%m-%d").to_string()
 }
 
 fn should_track_daily_active(last_tracked_day: Option<&str>, today: &str) -> bool {
@@ -175,6 +169,52 @@ fn should_track_daily_active(last_tracked_day: Option<&str>, today: &str) -> boo
         Some(day) => day != today,
         None => true,
     }
+}
+
+fn send_aptabase_event(event_name: &'static str, app_version: String) {
+    std::thread::spawn(move || {
+        let sys = os_diagnostics::collect_aptabase_system_props();
+        let now_dur = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let session_id = format!(
+            "{}{:08}",
+            now_dur.as_secs(),
+            now_dur.subsec_nanos() % 100_000_000
+        );
+        let user_agent = format!(
+            "{}/{} {}/{} {}",
+            sys.os_name, sys.os_version, sys.engine_name, sys.engine_version, sys.locale
+        );
+        let payload = serde_json::json!([{
+            "timestamp": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "sessionId": session_id,
+            "eventName": event_name,
+            "systemProps": {
+                "isDebug": sys.is_debug,
+                "osName": sys.os_name,
+                "osVersion": sys.os_version,
+                "locale": sys.locale,
+                "engineName": sys.engine_name,
+                "engineVersion": sys.engine_version,
+                "appVersion": app_version,
+                "sdkVersion": "tauri-plugin-aptabase@1.0.0"
+            },
+            "props": serde_json::Value::Null
+        }]);
+        let Ok(client) = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .user_agent(user_agent)
+            .build()
+        else {
+            return;
+        };
+        let _ = client
+            .post(APTABASE_API_URL)
+            .header("App-Key", APTABASE_APP_KEY)
+            .json(&payload)
+            .send();
+    });
 }
 
 #[cfg(desktop)]
@@ -202,10 +242,10 @@ fn track_daily_active_if_needed(app_handle: &tauri::AppHandle) {
         return;
     }
 
-    if let Err(error) = app_handle.track_event(DAILY_ACTIVE_EVENT_NAME, None) {
-        log::warn!("Failed to track daily analytics event: {}", error);
-        return;
-    }
+    send_aptabase_event(
+        DAILY_ACTIVE_EVENT_NAME,
+        app_handle.package_info().version.to_string(),
+    );
 
     store.set(
         DAILY_ACTIVE_TRACKED_DAY_KEY,
@@ -218,15 +258,17 @@ fn track_daily_active_if_needed(app_handle: &tauri::AppHandle) {
 
 #[cfg(not(desktop))]
 fn track_daily_active_if_needed(app_handle: &tauri::AppHandle) {
-    let _ = app_handle.track_event(DAILY_ACTIVE_EVENT_NAME, None);
+    send_aptabase_event(
+        DAILY_ACTIVE_EVENT_NAME,
+        app_handle.package_info().version.to_string(),
+    );
 }
 
 #[cfg(desktop)]
-fn seconds_until_next_utc_day(now: time::OffsetDateTime) -> u64 {
-    let now_time = now.time();
-    let seconds_since_midnight = u64::from(now_time.hour()) * 60 * 60
-        + u64::from(now_time.minute()) * 60
-        + u64::from(now_time.second());
+fn seconds_until_next_utc_day(now: chrono::DateTime<chrono::Utc>) -> u64 {
+    use chrono::Timelike;
+    let seconds_since_midnight =
+        u64::from(now.hour()) * 3600 + u64::from(now.minute()) * 60 + u64::from(now.second());
     let seconds_until_next_day = 86_400_u64.saturating_sub(seconds_since_midnight);
     if seconds_until_next_day == 0 {
         86_400
@@ -240,7 +282,7 @@ fn spawn_daily_active_rollover_tracker(app_handle: tauri::AppHandle) {
     std::thread::spawn(move || {
         loop {
             let sleep_for = std::time::Duration::from_secs(seconds_until_next_utc_day(
-                time::OffsetDateTime::now_utc(),
+                chrono::Utc::now(),
             ));
             std::thread::sleep(sleep_for);
             track_daily_active_if_needed(&app_handle);
@@ -1011,6 +1053,10 @@ fn codex_claim_reset_credit(
                 })
         });
 
+    if base_provider_id != "codex" {
+        return Err("reset credit claim is only supported for Codex".to_string());
+    }
+
     let plugin = plugins
         .into_iter()
         .find(|p| p.manifest.id == base_provider_id || p.manifest.id == "codex")
@@ -1320,11 +1366,7 @@ fn list_plugins(state: tauri::State<'_, Mutex<AppState>>) -> Vec<PluginMeta> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let runtime = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-    let _guard = runtime.enter();
-
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_aptabase::Builder::new(APTABASE_APP_KEY).build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -1334,7 +1376,9 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init());
 
     #[cfg(target_os = "macos")]
-    let builder = builder.plugin(tauri_nspanel::init());
+    let builder = builder
+        .plugin(tauri_nspanel::init())
+        .plugin(tauri_plugin_liquid_glass::init());
 
     builder
         .plugin(
@@ -1354,7 +1398,6 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::Builder::new().build())
-        .plugin(tauri_plugin_liquid_glass::init())
         .invoke_handler(tauri::generate_handler![
             init_panel,
             hide_panel,
@@ -1407,9 +1450,6 @@ pub fn run() {
             ensure_crossusage_user_config_file();
 
             track_daily_active_if_needed(app.handle());
-            // Send startup event immediately; otherwise Aptabase only flushes on an interval and the
-            // dashboard can sit on “Waiting for the first event…” for up to a minute in release builds.
-            app.handle().flush_events_blocking();
             #[cfg(desktop)]
             spawn_daily_active_rollover_tracker(app.handle().clone());
 
@@ -1489,13 +1529,19 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, event| {
-            if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+        .run(|_app, event| match event {
+            tauri::RunEvent::ExitRequested { code, api, .. } => {
                 // Only prevent exit for window close (code=None). Allow Restart and Quit from tray.
                 if code.is_none() {
                     api.prevent_exit();
+                } else {
+                    local_http_api::flush_cache();
                 }
             }
+            tauri::RunEvent::Exit => {
+                local_http_api::flush_cache();
+            }
+            _ => {}
         });
 }
 
@@ -1504,7 +1550,7 @@ mod tests {
     use super::{
         DAILY_ACTIVE_TRACKED_DAY_KEY, seconds_until_next_utc_day, should_track_daily_active,
     };
-    use time::{Date, Month, PrimitiveDateTime, Time};
+    use chrono::TimeZone;
 
     #[test]
     fn should_track_when_no_previous_day() {
@@ -1530,11 +1576,7 @@ mod tests {
 
     #[test]
     fn rollover_sleep_waits_for_next_utc_day_boundary() {
-        let now = PrimitiveDateTime::new(
-            Date::from_calendar_date(2026, Month::February, 12).unwrap(),
-            Time::from_hms(23, 59, 50).unwrap(),
-        )
-        .assume_utc();
+        let now = chrono::Utc.with_ymd_and_hms(2026, 2, 12, 23, 59, 50).unwrap();
 
         assert_eq!(seconds_until_next_utc_day(now), 10);
     }

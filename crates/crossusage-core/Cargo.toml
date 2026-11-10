@@ -1,6 +1,6 @@
 [package]
 name = "crossusage-core"
-version = "1.5.0"
+version = "1.6.1"
 description = "Shared plugin engine for CrossUsage (GUI + CLI)"
 edition = "2024"
 
@@ -15,8 +15,8 @@ cbc = { version = "0.1.2", features = ["alloc"] }
 base64 = "0.22"
 log = "0.4"
 regex-lite = "0.1.9"
-reqwest = { version = "0.13.3", features = ["blocking", "json", "socks"] }
-rquickjs = { version = "0.12", features = ["bindgen"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["blocking", "json", "socks", "rustls", "system-proxy"] }
+rquickjs = "0.12"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -26,13 +26,11 @@ csv = "1.3"
 pbkdf2 = "0.13"
 sha1 = "0.11"
 sha2 = "0.11"
-time = { version = "0.3.47", features = ["formatting", "parsing"] }
 dirs = "6"
 keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-users = "0.11"
 
 [dev-dependencies]
 tempfile = "3"

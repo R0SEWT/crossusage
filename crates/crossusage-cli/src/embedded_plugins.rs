@@ -6,7 +6,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-static PLUGINS_ROOT: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../plugins");
+static PLUGINS_ROOT: Dir<'_> = include_dir!("$OUT_DIR/bundled_plugins");
 
 fn materialize_dir(dir: &Dir<'_>, plugins_dest: &Path) -> io::Result<()> {
     for entry in dir.entries() {
@@ -14,7 +14,12 @@ fn materialize_dir(dir: &Dir<'_>, plugins_dest: &Path) -> io::Result<()> {
             include_dir::DirEntry::File(f) => {
                 let rel = f.path();
                 let s = rel.to_string_lossy();
-                if s.starts_with("mock/") || s.as_ref() == "mock" {
+                if s.starts_with("mock/")
+                    || s.as_ref() == "mock"
+                    || s.ends_with(".test.js")
+                    || s.ends_with("test-helpers.js")
+                    || s.ends_with(".md")
+                {
                     continue;
                 }
                 let out = plugins_dest.join(rel);

@@ -183,14 +183,13 @@ export function buildProviderWidgetGroups(args: {
       }
       if (metrics.length === 0) return null
       let name = meta.name
-      const label = meta.displayLabel ?? meta.instanceLabel
-      if (label && name.endsWith(` (${label})`)) {
-        name = name.slice(0, -(label.length + 3))
+      if (meta.instanceLabel && name.endsWith(` (${meta.instanceLabel})`)) {
+        name = name.slice(0, -(meta.instanceLabel.length + 3))
       }
       return {
         pluginId,
         name,
-        instanceLabel: label,
+        instanceLabel: meta.instanceLabel,
         iconUrl: meta.iconUrl,
         brandColor: meta.brandColor,
         metrics,

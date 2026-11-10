@@ -24,6 +24,7 @@ import {
   getBaseProviderId,
   getEnabledPluginIds,
   getProviderDisplayName,
+  getProbeTargets,
   getProviderInstanceMeta,
   insertProviderInstanceInOrder,
   listNewlyBundledPluginIds,
@@ -116,13 +117,35 @@ describe("settings", () => {
       disabled: [],
       trayLines: {},
       providerInstances: {},
+      providerLabels: {},
     })
   })
 
   it("saves settings", async () => {
-    const settings = { order: ["a"], disabled: ["b"], trayLines: { a: ["Session"] }, providerInstances: {} }
+    const settings = { order: ["a"], disabled: ["b"], trayLines: { a: ["Session"] }, providerInstances: {}, providerLabels: {} }
     await savePluginSettings(settings)
     await expect(loadPluginSettings()).resolves.toEqual(settings)
+  })
+
+  it("round-trips a custom provider order through normalization", async () => {
+    const plugins: PluginMeta[] = [
+      { id: "antigravity-cli", name: "Antigravity CLI", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
+      { id: "claude", name: "Claude", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
+      { id: "codex", name: "Codex", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
+    ]
+    const settings = {
+      order: ["claude", "codex", "antigravity-cli"],
+      disabled: [],
+      trayLines: {},
+      providerInstances: {},
+      providerLabels: {},
+    }
+
+    await savePluginSettings(settings)
+    const loaded = await loadPluginSettings()
+    await savePluginSettings(normalizePluginSettings(loaded, plugins))
+
+    await expect(loadPluginSettings()).resolves.toMatchObject({ order: settings.order })
   })
 
   it("normalizes order + disabled against known plugins", () => {
@@ -135,14 +158,15 @@ describe("settings", () => {
       plugins
     )
     expect(normalized).toEqual({
-      order: ["a", "b"],
+      order: ["b", "a"],
       disabled: ["a"],
       trayLines: { "a": ["x"] },
       providerInstances: {},
+      providerLabels: {},
     })
   })
 
-  it("normalizes multiple account instances for the same provider", () => {
+  it("preserves saved order for multiple account instances", () => {
     const plugins: PluginMeta[] = [
       { id: "claude", name: "Claude", iconUrl: "icon", lines: [], primaryCandidates: ["Usage"] },
       { id: "cursor", name: "Cursor", iconUrl: "cursor-icon", lines: [], primaryCandidates: ["Requests"] },
@@ -164,7 +188,7 @@ describe("settings", () => {
       plugins
     )
 
-    expect(normalized.order).toEqual(["claude", "claude:personal", "claude:work", "cursor"])
+    expect(normalized.order).toEqual(["claude:personal", "cursor", "claude:work", "claude"])
     expect(normalized.disabled).toEqual(["claude:personal"])
     expect(normalized.trayLines).toEqual({ "claude:work": ["Usage"] })
     expect(normalized.providerInstances).toEqual({
@@ -179,6 +203,43 @@ describe("settings", () => {
       instanceLabel: "Work",
       iconUrl: "icon",
     })
+  })
+
+  it("uses providerLabels only for the base account display name", () => {
+    const plugins: PluginMeta[] = [
+      { id: "claude", name: "Claude", iconUrl: "icon", lines: [], primaryCandidates: [] },
+    ]
+    const normalized = normalizePluginSettings(
+      {
+        order: ["claude"],
+        disabled: [],
+        providerLabels: {
+          claude: "  Work CIP  ",
+          "claude:work": "Ignored",
+          missing: "Nope",
+          cursor: "   ",
+        },
+      },
+      plugins,
+    )
+    expect(normalized.providerLabels).toEqual({ claude: "Work CIP" })
+    expect(getProviderDisplayName("claude", normalized, plugins)).toBe("Claude (Work CIP)")
+    expect(getProviderInstanceMeta("claude", normalized, plugins)).toMatchObject({
+      id: "claude",
+      instanceLabel: "Work CIP",
+      name: "Claude (Work CIP)",
+    })
+    expect(getProbeTargets(["claude"], normalized)?.[0]).toEqual({
+      instanceId: "claude",
+      baseProviderId: "claude",
+      label: undefined,
+    })
+    const cleared = normalizePluginSettings(
+      { ...normalized, providerLabels: { claude: "  " } },
+      plugins,
+    )
+    expect(cleared.providerLabels).toEqual({})
+    expect(getProviderDisplayName("claude", cleared, plugins)).toBe("Claude")
   })
 
   it("keeps trayLines and providerInstances when migrating Windsurf to Devin", () => {
@@ -228,10 +289,12 @@ describe("settings", () => {
       plugins,
     )
     expect(getProviderDisplayName("claude", settings, plugins)).toBe("Claude (Team)")
+    // The base row carries its label in instanceLabel but stays the base provider.
     expect(getProviderInstanceMeta("claude", settings, plugins)).toMatchObject({
+      id: "claude",
+      baseProviderId: "claude",
       name: "Claude (Team)",
-      displayLabel: "Team",
-      instanceLabel: undefined,
+      instanceLabel: "Team",
     })
     expect(getProviderDisplayName("claude:work", settings, plugins)).toBe("Claude (Work)")
     expect(getProviderDisplayName("claude", { ...settings, providerLabels: {} }, plugins)).toBe("Claude")
@@ -407,18 +470,33 @@ describe("settings", () => {
     expect(arePluginSettingsEqual(startup, { ...startup, providerLabels: { claude: "Other" } })).toBe(false)
   })
 
-  it("sorts providers alphabetically by display name", () => {
+  it("preserves the saved Claude, Codex, Antigravity provider order", () => {
     const plugins: PluginMeta[] = [
-      { id: "cursor", name: "Cursor", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
+      { id: "antigravity-cli", name: "Antigravity CLI", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
       { id: "claude", name: "Claude", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
       { id: "codex", name: "Codex", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
-      { id: "cursor-nightly", name: "Cursor Nightly", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
     ]
     const result = normalizePluginSettings(
-      { order: ["cursor", "codex", "claude", "cursor-nightly"], disabled: [] },
+      { order: ["claude", "codex", "antigravity-cli"], disabled: [] },
       plugins
     )
-    expect(result.order).toEqual(["claude", "codex", "cursor", "cursor-nightly"])
+    expect(result.order).toEqual(["claude", "codex", "antigravity-cli"])
+  })
+
+  it("preserves saved order and appends newly discovered providers", () => {
+    const plugins: PluginMeta[] = [
+      { id: "grok", name: "Grok", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
+      { id: "antigravity-cli", name: "Antigravity CLI", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
+      { id: "claude", name: "Claude", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
+      { id: "codex", name: "Codex", iconUrl: "", iconFilePath: "", lines: [], primaryCandidates: [] },
+    ]
+    const result = normalizePluginSettings(
+      { order: ["codex", "antigravity-cli", "claude"], disabled: ["antigravity-cli"] },
+      plugins
+    )
+    expect(result.order).toEqual(["codex", "antigravity-cli", "claude", "grok"])
+    expect(result.disabled).toContain("antigravity-cli")
+    expect(result.disabled).toContain("grok")
   })
 
   it("auto-disables new non-default plugins", () => {
@@ -897,6 +975,7 @@ describe("settings", () => {
         disabled: ["mock"],
         trayLines: { cursor: ["Requests"] },
         providerInstances: {},
+        providerLabels: {},
       }
       await savePluginSettings(plugins)
       await saveThemeMode("dark")

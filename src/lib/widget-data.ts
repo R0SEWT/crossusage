@@ -138,7 +138,7 @@ export function resolveWidgetData(args: {
       }
     }
     const resetLabel =
-      line.resetsAt && resetTimerDisplayMode === "relative"
+      resetTimerDisplayMode === "relative"
         ? formatResetRelativeLabel(nowMs, line.resetsAt, {
             used,
             periodDurationMs: periodDurationMs ?? undefined,

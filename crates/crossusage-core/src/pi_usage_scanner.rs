@@ -7,17 +7,17 @@ use crate::log_usage_types::{
     local_day_key_from_offset, since_local_midnight, warn_unreadable_usage_file,
 };
 use crate::model_pricing::{ModelPricing, default_pricing};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use time::OffsetDateTime;
 
 #[derive(Clone)]
 struct Entry {
     id: Option<String>,
-    timestamp: OffsetDateTime,
+    timestamp: DateTime<Utc>,
     card_id: String,
     model: String,
     carried_cost: Option<f64>,
@@ -68,27 +68,25 @@ pub fn query_daily_for_card(card_id: &str, since_compact: &str) -> Vec<DailyUsag
     scan(card_id, days_back_from_since(since), default_pricing()).unwrap_or_default()
 }
 
-fn parse_since(since: &str) -> OffsetDateTime {
+fn parse_since(since: &str) -> DateTime<Utc> {
     let digits: String = since.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() >= 8 {
         if let (Ok(y), Ok(m), Ok(d)) = (
             digits[0..4].parse::<i32>(),
-            digits[4..6].parse::<u8>(),
-            digits[6..8].parse::<u8>(),
+            digits[4..6].parse::<u32>(),
+            digits[6..8].parse::<u32>(),
         ) {
-            if let Ok(month) = time::Month::try_from(m) {
-                if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
-                    return date.with_hms(0, 0, 0).expect("midnight").assume_utc();
-                }
+            if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
+                return date.and_hms_opt(0, 0, 0).expect("midnight").and_utc();
             }
         }
     }
     since_local_midnight(30)
 }
 
-fn days_back_from_since(since: OffsetDateTime) -> i32 {
-    let now = OffsetDateTime::now_utc();
-    ((now.date() - since.date()).whole_days().max(0) + 1) as i32
+fn days_back_from_since(since: DateTime<Utc>) -> i32 {
+    let now = Utc::now();
+    ((now.date_naive() - since.date_naive()).num_days().max(0) + 1) as i32
 }
 
 fn scan(card_id: &str, days_back: i32, pricing: &ModelPricing) -> Option<Vec<DailyUsageRow>> {
@@ -135,11 +133,11 @@ fn walk_jsonl(dir: &Path, out: &mut Vec<DiscoveredFile>) {
     }
 }
 
-fn file_mtime_before(mtime: &SystemTime, since: OffsetDateTime) -> bool {
+fn file_mtime_before(mtime: &SystemTime, since: DateTime<Utc>) -> bool {
     let Ok(duration) = mtime.duration_since(SystemTime::UNIX_EPOCH) else {
         return false;
     };
-    let Ok(file_dt) = OffsetDateTime::from_unix_timestamp(duration.as_secs() as i64) else {
+    let Some(file_dt) = DateTime::<Utc>::from_timestamp(duration.as_secs() as i64, 0) else {
         return false;
     };
     file_dt < since
@@ -228,7 +226,7 @@ fn dedup(entries: Vec<Entry>) -> Vec<Entry> {
 fn aggregate(
     entries: &[Entry],
     card_id: &str,
-    since: OffsetDateTime,
+    since: DateTime<Utc>,
     pricing: &ModelPricing,
 ) -> Vec<DailyUsageRow> {
     let mut tokens_by_day: BTreeMap<String, i32> = BTreeMap::new();
@@ -250,7 +248,33 @@ fn aggregate(
         } else {
             trimmed
         };
-        let cost = if let Some(carried) = entry.carried_cost.filter(|c| *c > 0.0) {
+        let cost = if card_id == "codex" && trimmed == crate::codex_usage_scanner::AUTO_REVIEW_MODEL {
+            if entry.timestamp.timestamp() >= crate::codex_usage_scanner::AUTO_REVIEW_FREE_SINCE_UNIX {
+                0.0
+            } else if let Some(carried) = entry.carried_cost.filter(|c| *c > 0.0) {
+                carried
+            } else {
+                let fallback = crate::codex_usage_scanner::auto_review_fallback(
+                    &crate::codex_usage_scanner::event_day_key(&entry.timestamp),
+                );
+                let total_input = entry.tokens.input + entry.tokens.cache_read;
+                match crate::codex_pricing::estimated_cost_dollars(
+                    pricing,
+                    &crate::codex_pricing::CodexCostInput {
+                        model: &fallback,
+                        input: total_input,
+                        cached: entry.tokens.cache_read.min(total_input),
+                        output: entry.tokens.output,
+                        reasoning: 0,
+                        is_fast: entry.tokens.is_fast,
+                        is_ultrafast: false,
+                    },
+                ) {
+                    Some(c) => c,
+                    None => continue,
+                }
+            }
+        } else if let Some(carried) = entry.carried_cost.filter(|c| *c > 0.0) {
             carried
         } else if !trimmed.is_empty() {
             match pricing.estimated_cost_dollars(trimmed, &entry.tokens) {

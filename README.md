@@ -12,7 +12,7 @@ Menu-bar app for AI coding subscription usage — one panel, progress bars, no d
 
 **Versioning:** CrossUsage uses **`MAJOR.MINOR.PATCH`** (e.g. `1.0.10`). See [docs/VERSIONING.md](docs/VERSIONING.md) for when to bump each part. Upstream OpenUsage `0.6.x` is tracked in the changelog only, not in our app version.
 
-![CrossUsage screenshot](screenshot.png)
+![CrossUsage on Linux — Modern Dashboard, Classic Overview, and Provider Detail](screenshot.png)
 
 ## Download
 

@@ -35,7 +35,7 @@ describe("reset-tooltip", () => {
     ).toBe("Not started")
   })
 
-  it("shows a countdown for Claude sub-1% sessions with a reset date", () => {
+  it("shows a countdown for Claude/OpenCode sub-1% sessions with a reset date and Not started when reset date is missing", () => {
     const nowMs = Date.parse("2026-02-03T11:00:00.000Z")
     const resetsAtIso = "2026-02-03T16:00:00.000Z"
     expect(
@@ -46,6 +46,15 @@ describe("reset-tooltip", () => {
         sessionStartSignal: "missingResetDate",
       }),
     ).toBe("Resets in 5h 0m")
+
+    expect(
+      formatResetRelativeLabel(nowMs, null, {
+        used: 0,
+        periodDurationMs: 5 * 60 * 60 * 1000,
+        label: "Session",
+        sessionStartSignal: "missingResetDate",
+      }),
+    ).toBe("Not started")
   })
 
   it("formats absolute reset labels with same-day context", () => {

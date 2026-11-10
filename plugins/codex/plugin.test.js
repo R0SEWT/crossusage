@@ -48,7 +48,11 @@ describe("codex plugin", () => {
 
   const makeAccountCtx = ({ instanceId, credential }) => {
     const ctx = makeCtx()
-    ctx.account = { instanceId, baseProviderId: "codex", label: instanceId === "codex" ? "" : "Work" }
+    ctx.account = {
+      instanceId,
+      baseProviderId: "codex",
+      label: instanceId === "codex" ? "" : "Work",
+    }
     ctx.util.readProviderCredential = () => credential
     ctx.host.fs.writeText("~/.codex/auth.json", JSON.stringify({
       tokens: { access_token: "default-file-token", refresh_token: "default-file-refresh" },
@@ -62,7 +66,7 @@ describe("codex plugin", () => {
           bodyText: JSON.stringify({ error: { code: "refresh_token_invalidated" } }),
         }
       }
-      if (opts.headers.Authorization === "Bearer default-file-token") {
+      if (opts.headers && opts.headers.Authorization === "Bearer default-file-token") {
         return { status: 200, headers: { "x-codex-primary-used-percent": "12" }, bodyText: "{}" }
       }
       return { status: 401, headers: {}, bodyText: "" }
@@ -289,7 +293,7 @@ describe("codex plugin", () => {
 
     const plugin = await loadPlugin()
     const result = plugin.probe(ctx)
-    expect(result.plan).toBe("Pro 20x")
+    expect(result.plan).toBe("Pro 200")
     expect(result.lines.find((line) => line.label === "Session")).toBeTruthy()
     expect(result.lines.find((line) => line.label === "Weekly")).toBeTruthy()
     const credits = result.lines.find((line) => line.label === "Credits")
@@ -303,7 +307,7 @@ describe("codex plugin", () => {
     expect(credits).not.toHaveProperty("limit")
   })
 
-  it("maps prolite plan to Pro 5x", async () => {
+  it("maps prolite plan to Pro 100 and promax to Pro 500", async () => {
     const ctx = makeCtx()
     ctx.host.fs.writeText("~/.codex/auth.json", JSON.stringify({
       tokens: { access_token: "token" },
@@ -327,12 +331,25 @@ describe("codex plugin", () => {
 
     const plugin = await loadPlugin()
     const result = plugin.probe(ctx)
-    expect(result.plan).toBe("Pro 5x")
+    expect(result.plan).toBe("Pro 100")
     expect(result.lines.find((line) => line.label === "Session")).toBeTruthy()
     expect(result.lines.find((line) => line.label === "Weekly")).toBeTruthy()
     const credits = result.lines.find((line) => line.label === "Credits")
     expect(credits).toBeTruthy()
     expect(credits.value).toBe("$4.00 · 100 credits")
+
+    ctx.host.http.request.mockReturnValue({
+      status: 200,
+      headers: {},
+      bodyText: JSON.stringify({
+        plan_type: "promax",
+        rate_limit: {
+          primary_window: { reset_after_seconds: 60, used_percent: 10 },
+        },
+      }),
+    })
+    const promaxResult = plugin.probe(ctx)
+    expect(promaxResult.plan).toBe("Pro 500")
   })
 
   it("maps self_serve_business_prolite to Business Premium", async () => {

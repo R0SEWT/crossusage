@@ -110,3 +110,7 @@ Use below list to store and recall user notes when asked to do so.
 - **sudo:** use `sudo cursor-sudo <cmd>` (not bare `sudo`) so elevated commands work in this environment.
 - **GitHub CLI:** `gh auth login` is done on the host as `barramee27`; use `gh` for releases/PRs once the keyring session exists.
 - **No file line-count budget.** Do not split, truncate, or drop code because a file is “too long.” Keep a feature in one place if that is clearer.
+- **Lab vs prod:** Experiments live in `/home/barramee27/crossusage-lab` (`lab`). Do not merge/PR/tag them onto `feat/linux-windows-native-support` until the user says to move to prod.
+- **PR wording:** CrossUsage is one-person (`barramee27`). On PRs/reviews/comments never say “maintainer” (sounds like a team). Say “user” if waiting on the repo owner, or just merge/ask them directly.
+- **Public docs:** `docs/choices.md` / `docs/breadcrumbs.md` are product/engineering notes only. Do not write chat process, review waits, or “remember this” voice rules there — they get pushed. Those go in User Notes.
+

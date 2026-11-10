@@ -101,6 +101,7 @@ fn flat_cost(tokens: i32, rate_per_million: f64) -> f64 {
 
 struct AliasRule {
     pattern: Regex,
+    forbidden_prefix: Option<String>,
     canonical: String,
 }
 
@@ -265,6 +266,11 @@ impl ModelPricing {
 impl PricingSupplement {
     fn canonical_name(&self, model: &str) -> Option<String> {
         for rule in &self.alias_rules {
+            if let Some(ref forbidden) = rule.forbidden_prefix {
+                if model == forbidden {
+                    continue;
+                }
+            }
             if rule.pattern.is_match(model) {
                 return Some(rule.canonical.clone());
             }
@@ -322,8 +328,9 @@ fn load_supplement(json: &str) -> PricingSupplement {
         .alias_rules
         .into_iter()
         .filter_map(|rule| {
-            compile_alias_pattern(&rule.pattern).map(|pattern| AliasRule {
+            compile_alias_pattern(&rule.pattern).map(|(pattern, forbidden_prefix)| AliasRule {
                 pattern,
+                forbidden_prefix,
                 canonical: rule.canonical,
             })
         })
@@ -335,18 +342,27 @@ fn load_supplement(json: &str) -> PricingSupplement {
     }
 }
 
-/// Upstream Swift NSRegularExpression accepts `(?i)` inline flags. regex-lite does not;
-/// strip a leading `(?i)` and compile case-insensitively instead (Cursor Router labels).
-fn compile_alias_pattern(pattern: &str) -> Option<Regex> {
+/// Upstream Swift NSRegularExpression accepts `(?i)` inline flags and `(?=-)` lookaheads.
+/// `regex-lite` supports neither, so strip a leading `(?i)` and translate `(?=-)` into a
+/// forbidden bare-prefix check (`gemini-3-pro(?=-)` matches `gemini-3-pro-*` but not `gemini-3-pro`).
+fn compile_alias_pattern(pattern: &str) -> Option<(Regex, Option<String>)> {
     let (body, case_insensitive) = match pattern.strip_prefix("(?i)") {
         Some(rest) => (rest, true),
         None => (pattern, false),
     };
-    if case_insensitive {
-        RegexBuilder::new(body).case_insensitive(true).build().ok()
+    let (body_owned, forbidden_prefix) = if let Some(idx) = body.find("(?=-)") {
+        let prefix = body[..idx].trim_start_matches('^').to_string();
+        let replaced = format!("{}{}", &body[..idx], &body[idx + "(?=-)".len()..]);
+        (replaced, Some(prefix))
     } else {
-        Regex::new(body).ok()
-    }
+        (body.to_string(), None)
+    };
+    let regex = if case_insensitive {
+        RegexBuilder::new(&body_owned).case_insensitive(true).build().ok()?
+    } else {
+        Regex::new(&body_owned).ok()?
+    };
+    Some((regex, forbidden_prefix))
 }
 
 fn load_compact_catalog(json: &str) -> HashMap<String, ModelRates> {
@@ -479,6 +495,21 @@ mod tests {
         assert!(astra.input_per_million > 0.0);
         let spark = p.resolve("muse-spark-1.3-xhigh").expect("spark");
         assert!((spark.input_per_million - 1.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn v0715_gemini_none_shorthand_aliases() {
+        let p = ModelPricing::from_bundled();
+        assert_eq!(p.canonical_name("gemini-2.5-flash-n").as_deref(), Some("gemini-2.5-flash"));
+        assert_eq!(p.canonical_name("gemini-3-flash-n").as_deref(), Some("gemini-3-flash-preview"));
+        assert_eq!(p.canonical_name("gemini-3.5-flash-n").as_deref(), Some("gemini-3.5-flash"));
+        assert_eq!(p.canonical_name("gemini-3.6-flash-n").as_deref(), Some("gemini-3.6-flash"));
+        assert_eq!(p.canonical_name("gemini-3.7-flash-n").as_deref(), Some("gemini-3.7-flash"));
+        assert_eq!(p.canonical_name("gemini-3.8-flash-n").as_deref(), Some("gemini-3.8-flash"));
+        assert_eq!(p.canonical_name("gemini-3-pro-n").as_deref(), Some("gemini-3-pro-preview"));
+        assert_eq!(p.canonical_name("gemini-3-pro-none").as_deref(), Some("gemini-3-pro-preview"));
+        assert_eq!(p.canonical_name("gemini-3-pro"), None);
+        assert_eq!(p.canonical_name("gemini-3.1-pro-n").as_deref(), Some("gemini-3.1-pro-preview"));
     }
 
     #[test]

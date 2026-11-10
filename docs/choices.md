@@ -1,5 +1,37 @@
 # Choices
 
+## 2026-11-04
+
+- Antigravity CLI quota summary: use the tested versioned `antigravity/cli/1.5.0` identity for `retrieveUserQuotaSummary`; the unversioned identity produced a partial response without Gemini buckets on one account. See [the dated decision](DECISIONS.md#2026-11-04--identify-the-antigravity-cli-quota-client-with-a-versioned-user-agent) for evidence and reconsideration triggers.
+
+## 2026-11-01
+
+- **Perplexity Windows/Linux auth:** cookie, not Bearer. No CFNetwork-equivalent cache and no plaintext token on disk (checked live app data and a HAR from the web client: only `next-auth` JWE cookies, 5 segments, exist). Send as a `Cookie` header to the same REST paths the account page uses (`rate-limit/status`, `billing/credits`, `api/auth/session`), not `Authorization: Bearer`.
+- **Credential-shape detection:** the `readProviderCredential()` value routes to cookie auth when it contains `=` or looks like `eyJ...` with 3+ dots (JWE, not the 3-part Bearer JWT); otherwise it falls through to the existing macOS cache path. No new plugin API surface.
+- **Line shape for cookie mode:** `text` lines, not `progress`. `rate-limit/status` returns exact remaining counts only for some modes (`kind: "exact"`); most report `kind: "not_provided"`, rendered as `available` / `not available` instead of a made-up bar.
+- **Not reusing `chromiumCookies.read`:** it explicitly does not support Windows yet (DPAPI / v20) and reads browser profiles, not Electron app dirs. Revisit if it gains Windows support.
+
+## 2026-10-19
+
+- **1.6.1 (PATCH):** OpenUsage **v0.7.14 + v0.7.15** ports + build/size optimization pass ([VERSIONING.md](./VERSIONING.md)).
+- **OpenUsage v0.7.15 port:** Ported Codex dashboard link (`chatgpt.com/settings/usage`), Gemini `-n` none-effort pricing alias (`compile_alias_pattern` lookahead handling in `regex-lite`), Codex `codex-auto-review` $0 cost since `2026-10-06T00:00:00Z` across Codex + Pi scanners, OpenCode Go `__drizzle_migrations` check (`20260805200742_import_legacy_credentials`), Ollama `/api/balance` dollar allowance + `Purchased Credits`, Claude `Rate Limit Resets` hourly polling cache (`3600000ms`), and Cursor incremental day-by-day paged `get-filtered-usage-events` history cache (`cursor-usage-history/*.json`) with CSV fallback.
+
+## 2026-10-16
+
+- **OpenUsage v0.7.14 port:** Ported Codex plan names (`Pro 100`/`Pro 200`/`Pro 500`), Cursor structured team usage pools (`hasModelPools`), and OpenCode Go sub-1% session reset countdowns (dropping 5h placeholder resets and setting `sessionStartSignal: "missingResetDate"`). Skipped macOS `xswap`/SwiftUI-only changes (#1322, #1338, #1343, #1345, #1346, #1349). Hold release until OpenUsage v0.7.15 stable ships.
+
+## 2026-10-05
+
+- **1.6.0:** MINOR. The base account label is a CrossUsage feature ([VERSIONING.md](./VERSIONING.md)). OpenUsage **v0.7.13** rides along (would be PATCH alone).
+
+## 2026-10-04
+
+- **v0.7.13 scope:** Skip Codex Swap and auto Codex-home cards (manual extra accounts stay). Skip PostHog/Sparkle/pullfrog and Swift settings copy.
+
+## 2026-09-25
+
+- **Base account label:** `providerLabels` is display-only. Empty rename clears it. Extra accounts still use `providerInstances` and the account store. Probe targets do not receive the base label.
+
 ## 2026-09-20
 
 - **1.5.0:** MINOR — Gemini Apps is a new CrossUsage provider ([VERSIONING.md](./VERSIONING.md)). OpenUsage **v0.7.11 + v0.7.12** rides along (0.7.11 was never ported; would be PATCH alone). Skip Claude Swap/Desktop/iCloud/ownership scans, PostHog/stale.yml, menu-bar pin remap. Ollama Cloud Ed25519 skipped (cookies/API key already). OpenCode Codex OAuth (#1195) later. Antigravity #1206: sibling `antigravity*` conversation dirs now; step timestamps later.

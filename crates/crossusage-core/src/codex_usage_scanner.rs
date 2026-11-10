@@ -8,13 +8,13 @@ use crate::log_usage_types::{
     since_local_midnight, warn_unreadable_usage_file,
 };
 use crate::model_pricing::{ModelPricing, default_pricing};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
-use time::OffsetDateTime;
 
 static FILE_CACHE: Mutex<Option<HashMap<String, CachedFile>>> = Mutex::new(None);
 
@@ -26,7 +26,7 @@ struct CachedFile {
 
 #[derive(Clone)]
 struct CodexEvent {
-    timestamp: OffsetDateTime,
+    timestamp: DateTime<Utc>,
     model: String,
     /// Dated Codex model used only to price `codex-auto-review` rows (#1085).
     pricing_model: Option<String>,
@@ -36,6 +36,7 @@ struct CodexEvent {
     reasoning: i32,
     total: i32,
     is_fast: bool,
+    is_ultrafast: bool,
 }
 
 struct DiscoveredFile {
@@ -65,30 +66,25 @@ pub fn query_daily_host_json(opts_json: &str) -> String {
     host_query_response(status, daily)
 }
 
-fn parse_since(since: &str) -> OffsetDateTime {
+fn parse_since(since: &str) -> DateTime<Utc> {
     let digits: String = since.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() >= 8 {
         if let (Ok(y), Ok(m), Ok(d)) = (
             digits[0..4].parse::<i32>(),
-            digits[4..6].parse::<u8>(),
-            digits[6..8].parse::<u8>(),
+            digits[4..6].parse::<u32>(),
+            digits[6..8].parse::<u32>(),
         ) {
-            if let Ok(month) = time::Month::try_from(m) {
-                if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
-                    return date
-                        .with_hms(0, 0, 0)
-                        .expect("midnight")
-                        .assume_utc();
-                }
+            if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
+                return date.and_hms_opt(0, 0, 0).expect("midnight").and_utc();
             }
         }
     }
     since_local_midnight(30)
 }
 
-fn days_back_from_since(since: OffsetDateTime) -> i32 {
-    let now = OffsetDateTime::now_utc();
-    ((now.date() - since.date()).whole_days().max(0) + 1) as i32
+fn days_back_from_since(since: DateTime<Utc>) -> i32 {
+    let now = Utc::now();
+    ((now.date_naive() - since.date_naive()).num_days().max(0) + 1) as i32
 }
 
 fn scan(days_back: i32, home_path: Option<&str>, pricing: &ModelPricing) -> Option<Vec<DailyUsageRow>> {
@@ -219,11 +215,11 @@ fn collect_session_files(
     }
 }
 
-fn file_mtime_before(mtime: &SystemTime, since: OffsetDateTime) -> bool {
+fn file_mtime_before(mtime: &SystemTime, since: DateTime<Utc>) -> bool {
     let Ok(duration) = mtime.duration_since(SystemTime::UNIX_EPOCH) else {
         return false;
     };
-    let Ok(file_dt) = OffsetDateTime::from_unix_timestamp(duration.as_secs() as i64) else {
+    let Some(file_dt) = DateTime::<Utc>::from_timestamp(duration.as_secs() as i64, 0) else {
         return false;
     };
     file_dt < since
@@ -306,7 +302,7 @@ impl ChildReplayGate {
                 let Some(line_dt) = claude_usage_scanner::parse_iso_timestamp(raw) else {
                     return false;
                 };
-                started_at >= line_dt.unix_timestamp() as f64
+                started_at >= line_dt.timestamp() as f64
             }
         }
     }
@@ -369,6 +365,7 @@ fn parse_file(path: &Path) -> Vec<CodexEvent> {
     let mut previous_totals: Option<RawUsage> = None;
     let mut current_model: Option<String> = None;
     let mut current_tier_is_fast = false;
+    let mut current_tier_is_ultrafast = false;
     let mut saw_session_meta = false;
     let mut replay_gate: Option<ChildReplayGate> = None;
 
@@ -414,7 +411,7 @@ fn parse_file(path: &Path) -> Vec<CodexEvent> {
                         if let Some(created) =
                             claude_usage_scanner::parse_iso_timestamp(timestamp_raw.trim())
                         {
-                            replay_gate = Some(ChildReplayGate::UntilStartedAt(created.unix_timestamp()));
+                            replay_gate = Some(ChildReplayGate::UntilStartedAt(created.timestamp()));
                         } else {
                             replay_gate = Some(ChildReplayGate::UntilSelfTimedTaskStarted);
                         }
@@ -434,7 +431,9 @@ fn parse_file(path: &Path) -> Vec<CodexEvent> {
         {
             if let Some(p) = payload {
                 if let Some(tier) = service_tier_in_payload(p) {
-                    current_tier_is_fast = tier == "fast" || tier == "priority";
+                    current_tier_is_ultrafast = tier == "ultrafast";
+                    current_tier_is_fast = !current_tier_is_ultrafast
+                        && (tier == "fast" || tier == "priority");
                 }
             }
             continue;
@@ -508,7 +507,11 @@ fn parse_file(path: &Path) -> Vec<CodexEvent> {
         let parsed_model = model_name_in_map(p).or_else(|| info.and_then(model_name_in_map));
         let model = resolve_model(parsed_model, &mut current_model);
         let pricing_model = if model == AUTO_REVIEW_MODEL {
-            Some(auto_review_fallback(&event_day_key(&timestamp)))
+            if timestamp.timestamp() >= AUTO_REVIEW_FREE_SINCE_UNIX {
+                None
+            } else {
+                Some(auto_review_fallback(&event_day_key(&timestamp)))
+            }
         } else if model == RESERVE_MODEL {
             Some(RESERVE_PRICING_MODEL.to_string())
         } else {
@@ -525,6 +528,7 @@ fn parse_file(path: &Path) -> Vec<CodexEvent> {
             reasoning: usage.reasoning,
             total: usage.total,
             is_fast: current_tier_is_fast,
+            is_ultrafast: current_tier_is_ultrafast,
         });
     }
     events
@@ -559,7 +563,9 @@ fn resolve_model(parsed: Option<String>, current_model: &mut Option<String>) -> 
     })
 }
 
-const AUTO_REVIEW_MODEL: &str = "codex-auto-review";
+pub const AUTO_REVIEW_MODEL: &str = "codex-auto-review";
+/// Guardian auto-review stopped billing API tokens on 2026-10-06T00:00:00Z (#1362).
+pub const AUTO_REVIEW_FREE_SINCE_UNIX: i64 = 1_791_244_800;
 const RESERVE_MODEL: &str = "gpt-reserve";
 const RESERVE_PRICING_MODEL: &str = "gpt-5.6-luna";
 
@@ -576,16 +582,11 @@ const AUTO_REVIEW_FALLBACKS: &[(&str, &str)] = &[
     ("2025-08-07", "gpt-5"),
 ];
 
-fn event_day_key(ts: &OffsetDateTime) -> String {
-    format!(
-        "{:04}-{:02}-{:02}",
-        ts.year(),
-        u8::from(ts.month()),
-        ts.day()
-    )
+pub(crate) fn event_day_key(ts: &DateTime<Utc>) -> String {
+    ts.format("%Y-%m-%d").to_string()
 }
 
-fn auto_review_fallback(date: &str) -> String {
+pub(crate) fn auto_review_fallback(date: &str) -> String {
     if date.len() != 10 || !date.as_bytes().iter().enumerate().all(|(i, b)| {
         if i == 4 || i == 7 {
             *b == b'-'
@@ -607,7 +608,8 @@ fn dedup_events(events: Vec<CodexEvent>) -> Vec<CodexEvent> {
     let mut out = Vec::new();
     for e in events {
         let key = (
-            e.timestamp.unix_timestamp_nanos(),
+            i128::from(e.timestamp.timestamp()) * 1_000_000_000
+                + i128::from(e.timestamp.timestamp_subsec_nanos()),
             e.model.clone(),
             e.pricing_model.clone(),
             e.input,
@@ -622,7 +624,7 @@ fn dedup_events(events: Vec<CodexEvent>) -> Vec<CodexEvent> {
     out
 }
 
-fn aggregate(events: &[CodexEvent], since: OffsetDateTime, pricing: &ModelPricing) -> Vec<DailyUsageRow> {
+fn aggregate(events: &[CodexEvent], since: DateTime<Utc>, pricing: &ModelPricing) -> Vec<DailyUsageRow> {
     let mut tokens_by_day: BTreeMap<String, i32> = BTreeMap::new();
     let mut cost_by_day: BTreeMap<String, f64> = BTreeMap::new();
     let mut priced_days: HashSet<String> = HashSet::new();
@@ -635,19 +637,25 @@ fn aggregate(events: &[CodexEvent], since: OffsetDateTime, pricing: &ModelPricin
             continue;
         }
         let day = local_day_key_from_offset(&event.timestamp);
-        let pricing_model = event.pricing_model.as_deref().unwrap_or(&event.model);
-        let Some(cost) = codex_pricing::estimated_cost_dollars(
-            pricing,
-            &CodexCostInput {
-                model: pricing_model,
-                input: event.input,
-                cached: event.cached,
-                output: event.output,
-                reasoning: event.reasoning,
-                is_fast: event.is_fast,
-            },
-        ) else {
-            continue;
+        let cost = if event.model == AUTO_REVIEW_MODEL && event.pricing_model.is_none() {
+            0.0
+        } else {
+            let pricing_model = event.pricing_model.as_deref().unwrap_or(&event.model);
+            let Some(c) = codex_pricing::estimated_cost_dollars(
+                pricing,
+                &CodexCostInput {
+                    model: pricing_model,
+                    input: event.input,
+                    cached: event.cached,
+                    output: event.output,
+                    reasoning: event.reasoning,
+                    is_fast: event.is_fast,
+                    is_ultrafast: event.is_ultrafast,
+                },
+            ) else {
+                continue;
+            };
+            c
         };
         let total = if event.total > 0 {
             event.total
@@ -794,7 +802,7 @@ mod tests {
         assert_eq!(auto_review_fallback("2025-08-01"), "gpt-5");
         assert_eq!(auto_review_fallback("bogus"), "gpt-5");
 
-        let ts = OffsetDateTime::from_unix_timestamp(1_774_947_200).expect("ts");
+        let ts = DateTime::<Utc>::from_timestamp(1_774_947_200, 0).expect("ts");
         let rows = aggregate(
             &[CodexEvent {
                 timestamp: ts,
@@ -806,6 +814,7 @@ mod tests {
                 reasoning: 0,
                 total: 1100,
                 is_fast: false,
+                is_ultrafast: false,
             }],
             ts,
             &ModelPricing::from_bundled(),
@@ -814,11 +823,36 @@ mod tests {
         assert!(rows[0].models.contains_key("codex-auto-review"));
         assert!(!rows[0].models.contains_key("gpt-5.5"));
         assert!(rows[0].total_cost.unwrap_or(0.0) > 0.0);
+
+        let free_ts = DateTime::<Utc>::from_timestamp(AUTO_REVIEW_FREE_SINCE_UNIX, 0).expect("free_ts");
+        let free_rows = aggregate(
+            &[CodexEvent {
+                timestamp: free_ts,
+                model: AUTO_REVIEW_MODEL.into(),
+                pricing_model: None,
+                input: 1000,
+                cached: 0,
+                output: 100,
+                reasoning: 0,
+                total: 1100,
+                is_fast: false,
+                is_ultrafast: false,
+            }],
+            free_ts,
+            &ModelPricing::from_bundled(),
+        );
+        assert_eq!(free_rows.len(), 1);
+        assert_eq!(free_rows[0].total_tokens, 1100);
+        assert_eq!(free_rows[0].total_cost, Some(0.0));
+        assert_eq!(
+            free_rows[0].models.get("codex-auto-review").and_then(|m| m.total_cost),
+            Some(0.0)
+        );
     }
 
     #[test]
     fn reserve_keeps_slug_and_prices_at_luna() {
-        let ts = OffsetDateTime::from_unix_timestamp(1_774_947_200).expect("ts");
+        let ts = DateTime::<Utc>::from_timestamp(1_774_947_200, 0).expect("ts");
         let rows = aggregate(
             &[CodexEvent {
                 timestamp: ts,
@@ -830,6 +864,7 @@ mod tests {
                 reasoning: 0,
                 total: 1100,
                 is_fast: false,
+                is_ultrafast: false,
             }],
             ts,
             &ModelPricing::from_bundled(),

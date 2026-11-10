@@ -3,9 +3,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;
-use time::format_description::well_known::Iso8601;
-use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
 
 const CHARS_PER_TOKEN: u64 = 4;
 
@@ -46,46 +45,37 @@ fn expand_tilde(path: &str) -> PathBuf {
     PathBuf::from(trimmed)
 }
 
-fn parse_since_day(since: &str) -> Option<Date> {
+fn parse_since_day(since: &str) -> Option<NaiveDate> {
     let digits: String = since.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() >= 8 {
         let y: i32 = digits[0..4].parse().ok()?;
-        let m: u8 = digits[4..6].parse().ok()?;
-        let d: u8 = digits[6..8].parse().ok()?;
-        return Date::from_calendar_date(y, time::Month::try_from(m).ok()?, d).ok();
+        let m: u32 = digits[4..6].parse().ok()?;
+        let d: u32 = digits[6..8].parse().ok()?;
+        return NaiveDate::from_ymd_opt(y, m, d);
     }
-    Date::parse(since, &Iso8601::DEFAULT).ok()
+    NaiveDate::parse_from_str(since, "%Y-%m-%d").ok()
 }
 
 fn day_key_from_mtime(path: &Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
     let modified = meta.modified().ok()?;
-    let dt = OffsetDateTime::from(modified);
-    Some(format!(
-        "{:04}-{:02}-{:02}",
-        dt.year(),
-        u8::from(dt.month()),
-        dt.day()
-    ))
+    let dt: DateTime<Utc> = modified.into();
+    Some(dt.format("%Y-%m-%d").to_string())
 }
 
-fn date_from_day_key(key: &str) -> Option<Date> {
+fn date_from_day_key(key: &str) -> Option<NaiveDate> {
     if key.len() < 10 {
         return None;
     }
     let y: i32 = key.get(0..4)?.parse().ok()?;
-    let m: u8 = key.get(5..7)?.parse().ok()?;
-    let d: u8 = key.get(8..10)?.parse().ok()?;
-    Date::from_calendar_date(y, time::Month::try_from(m).ok()?, d).ok()
+    let m: u32 = key.get(5..7)?.parse().ok()?;
+    let d: u32 = key.get(8..10)?.parse().ok()?;
+    NaiveDate::from_ymd_opt(y, m, d)
 }
 
-fn yyyymmdd(date: Date) -> String {
-    format!(
-        "{:04}{:02}{:02}",
-        date.year(),
-        u8::from(date.month()),
-        date.day()
-    )
+#[cfg(test)]
+fn yyyymmdd(date: NaiveDate) -> String {
+    date.format("%Y%m%d").to_string()
 }
 
 fn estimate_tokens_in_jsonl(path: &Path) -> u64 {
@@ -150,8 +140,7 @@ fn walk_transcripts_dir(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Aggregate estimated tokens per calendar day from transcript files modified on/after `since` (YYYYMMDD or YYYY-MM-DD).
 pub fn query_daily_since(since: &str) -> (CursorLogsStatus, Vec<CursorDailyUsage>) {
     let since_date = parse_since_day(since)
-        .unwrap_or_else(|| OffsetDateTime::now_utc().date() - time::Duration::days(30));
-    let since_dt = PrimitiveDateTime::new(since_date, Time::MIDNIGHT).assume_utc();
+        .unwrap_or_else(|| Utc::now().date_naive() - chrono::Duration::days(30));
 
     let projects = cursor_agent_home().join("projects");
     let mut files = Vec::new();
@@ -165,8 +154,7 @@ pub fn query_daily_since(since: &str) -> (CursorLogsStatus, Vec<CursorDailyUsage
         let Some(file_day) = date_from_day_key(&day_key) else {
             continue;
         };
-        let file_dt = PrimitiveDateTime::new(file_day, Time::MIDNIGHT).assume_utc();
-        if file_dt < since_dt {
+        if file_day < since_date {
             continue;
         }
         let tokens = estimate_tokens_in_jsonl(&path);
@@ -218,7 +206,7 @@ mod tests {
             std::env::set_var("CURSOR_AGENT_HOME", dir.path());
         }
 
-        let since = yyyymmdd(OffsetDateTime::now_utc().date() - time::Duration::days(1));
+        let since = yyyymmdd(Utc::now().date_naive() - chrono::Duration::days(1));
         let (status, daily) = query_daily_since(&since);
         assert_eq!(status, CursorLogsStatus::Ok);
         assert_eq!(daily.len(), 1);

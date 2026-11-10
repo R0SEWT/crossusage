@@ -6,3 +6,12 @@ members = [
     "crates/crossusage-win-launcher",
     "src-tauri",
 ]
+
+[profile.dev]
+debug = 1
+
+[profile.release]
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+

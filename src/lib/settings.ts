@@ -28,7 +28,7 @@ export type PluginSettings = {
   disabled: string[];
   trayLines?: Record<string, string[]>;
   providerInstances?: Record<string, ProviderInstanceSettings>;
-  /** Optional display label for a base provider's own account (e.g. `claude`), keyed by base provider id. */
+  /** Display-only labels for base provider rows. Does not touch credentials. */
   providerLabels?: Record<string, string>;
 };
 
@@ -257,6 +257,7 @@ export const DEFAULT_PLUGIN_SETTINGS: PluginSettings = {
   disabled: [],
   trayLines: {},
   providerInstances: {},
+  providerLabels: {},
 };
 
 export async function loadPluginSettings(): Promise<PluginSettings> {
@@ -270,9 +271,10 @@ export async function loadPluginSettings(): Promise<PluginSettings> {
       stored.providerInstances && typeof stored.providerInstances === "object"
         ? stored.providerInstances
         : {},
-    ...(stored.providerLabels && typeof stored.providerLabels === "object"
-      ? { providerLabels: stored.providerLabels }
-      : {}),
+    providerLabels:
+      stored.providerLabels && typeof stored.providerLabels === "object"
+        ? stored.providerLabels
+        : {},
   };
 }
 
@@ -422,26 +424,23 @@ export function normalizePluginSettings(
     }
   }
 
-  const sortedOrder = sortPluginOrderAlphabetically(
-    order,
-    { providerInstances },
-    plugins
-  );
+  const providerLabels = normalizeProviderLabels(settings.providerLabels, knownBaseSet);
 
+  return { order, disabled, trayLines, providerInstances, providerLabels };
+}
+
+function normalizeProviderLabels(
+  raw: Record<string, string> | undefined,
+  knownBaseSet: Set<string>,
+): Record<string, string> {
   const providerLabels: Record<string, string> = {};
-  for (const [baseProviderId, rawLabel] of Object.entries(settings.providerLabels ?? {})) {
-    if (!knownBaseSet.has(baseProviderId) || typeof rawLabel !== "string") continue;
-    const label = rawLabel.trim();
-    if (label) providerLabels[baseProviderId] = label;
+  for (const [instanceId, value] of Object.entries(raw ?? {})) {
+    const id = instanceId.trim();
+    const label = typeof value === "string" ? value.trim() : "";
+    if (!id || !label || !knownBaseSet.has(id)) continue;
+    providerLabels[id] = label;
   }
-
-  return {
-    order: sortedOrder,
-    disabled,
-    trayLines,
-    providerInstances,
-    ...(Object.keys(providerLabels).length > 0 ? { providerLabels } : {}),
-  };
+  return providerLabels;
 }
 
 /**
@@ -714,10 +713,13 @@ export function getProviderInstanceLabel(instanceId: string, settings: PluginSet
   return settings?.providerInstances?.[instanceId]?.label ?? null;
 }
 
-/** Label shown next to the provider name: the extra account's label, or the base account's optional label. */
+/** Label shown on cards and lists. Base rows use providerLabels; extra accounts use their instance label. */
 export function getProviderDisplayLabel(instanceId: string, settings: PluginSettings | null): string | null {
   const baseProviderId = getBaseProviderId(instanceId, settings);
-  if (instanceId === baseProviderId) return settings?.providerLabels?.[baseProviderId] ?? null;
+  if (instanceId === baseProviderId) {
+    const label = settings?.providerLabels?.[instanceId]?.trim();
+    return label || null;
+  }
   return getProviderInstanceLabel(instanceId, settings);
 }
 
@@ -741,13 +743,12 @@ export function getProviderInstanceMeta(
   const baseProviderId = getBaseProviderId(instanceId, settings);
   const base = plugins.find((plugin) => plugin.id === baseProviderId);
   if (!base) return null;
-  const label = getProviderInstanceLabel(instanceId, settings) ?? undefined;
+  const label = getProviderDisplayLabel(instanceId, settings) ?? undefined;
   return {
     ...base,
     id: instanceId,
     baseProviderId,
     instanceLabel: label,
-    displayLabel: getProviderDisplayLabel(instanceId, settings) ?? undefined,
     name: getProviderDisplayName(instanceId, settings, plugins),
   };
 }
@@ -781,64 +782,6 @@ function defaultProviderInstanceLabel(baseProviderId: string, instanceId: string
     ? instanceId.slice(baseProviderId.length + 1)
     : instanceId;
   return suffix || "Account";
-}
-
-/** Provider list order: A–Z by base provider, account instances grouped under their base. */
-export function sortPluginOrderAlphabetically(
-  order: string[],
-  settings: Pick<PluginSettings, "providerInstances">,
-  plugins: PluginMeta[],
-): string[] {
-  const partialSettings = {
-    order,
-    disabled: [],
-    trayLines: {},
-    providerInstances: settings.providerInstances ?? {},
-  } satisfies PluginSettings;
-
-  const bases = new Set<string>()
-  for (const id of order) {
-    bases.add(getBaseProviderId(id, partialSettings))
-  }
-  for (const plugin of plugins) {
-    bases.add(plugin.id)
-  }
-
-  const sortedBases = [...bases].sort((a, b) => {
-    const nameA = plugins.find((plugin) => plugin.id === a)?.name ?? a
-    const nameB = plugins.find((plugin) => plugin.id === b)?.name ?? b
-    return nameA.localeCompare(nameB, undefined, { sensitivity: "base" })
-  })
-
-  const result: string[] = []
-  const seen = new Set<string>()
-  for (const base of sortedBases) {
-    const members = order.filter(
-      (id) => getBaseProviderId(id, partialSettings) === base && !seen.has(id),
-    )
-    const baseEntry = members.find((id) => id === base)
-    const instances = members
-      .filter((id) => id !== base)
-      .sort((a, b) =>
-        getProviderDisplayName(a, partialSettings, plugins).localeCompare(
-          getProviderDisplayName(b, partialSettings, plugins),
-          undefined,
-          { sensitivity: "base" },
-        ),
-      )
-    if (baseEntry) {
-      seen.add(baseEntry)
-      result.push(baseEntry)
-    }
-    for (const instance of instances) {
-      seen.add(instance)
-      result.push(instance)
-    }
-  }
-  for (const id of order) {
-    if (!seen.has(id)) result.push(id)
-  }
-  return result
 }
 
 export function insertProviderInstanceInOrder(

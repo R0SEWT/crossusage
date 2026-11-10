@@ -1,9 +1,11 @@
 (function () {
   const SETTINGS_URL = "https://ollama.com/settings"
+  const BALANCE_URL = "https://ollama.com/api/balance"
   const ACCOUNT_USAGE_URL = "https://ollama.com/api/account/usage"
   const SESSION_COOKIE_NAME = "__Secure-session"
   const SESSION_MS = 5 * 60 * 60 * 1000
   const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+  const MONTH_MS = 30 * 24 * 60 * 60 * 1000
   const KEYCHAIN_SESSION_SERVICE = "OpenUsage Ollama Session"
   const KEYCHAIN_COOKIE_SERVICE = "OpenUsage Ollama Cookie"
   const FIREFOX_PROFILE_ROOTS = [
@@ -153,6 +155,12 @@
     return json && typeof json === "object" ? json : null
   }
 
+  function fractionPercent(value) {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return null
+    return n <= 1 ? n * 100 : n
+  }
+
   function findNestedObject(root, keys) {
     if (!root || typeof root !== "object") return null
     for (let i = 0; i < keys.length; i += 1) {
@@ -162,30 +170,91 @@
     return null
   }
 
+  function readWindowPercent(windowObj, fallbackRaw) {
+    if (windowObj) {
+      const used = clampPercent(
+        windowObj.used_percent ??
+          windowObj.usedPercent ??
+          windowObj.percent ??
+          windowObj.percentage ??
+          fractionPercent(windowObj.usage)
+      )
+      if (used !== null) return used
+      const remaining = readNumber(
+        windowObj.remaining_percent ?? windowObj.remainingPercent
+      )
+      if (remaining !== null && remaining >= 0 && remaining <= 100) {
+        return clampPercent(Math.round((100 - remaining) * 10000) / 10000)
+      }
+      return null
+    }
+    return clampPercent(fallbackRaw)
+  }
+
+  function parseIncludedAllowance(included) {
+    if (!included || typeof included !== "object") return null
+    const allowance = readNumber(included.allowance_usd ?? included.allowanceUsd)
+    const balance = readNumber(included.balance_usd ?? included.balanceUsd)
+    if (allowance === null || allowance <= 0 || balance === null || balance < 0) return null
+    const used = Math.min(allowance, Math.max(0, Math.round((allowance - balance) * 10000) / 10000))
+    const period = included.period && typeof included.period === "object" ? included.period : null
+    const fromIso = readString(period && period.from)
+    const untilIso = readString(
+      (period && (period.until || period.resets_at || period.resetsAt)) ||
+        included.resets_at ||
+        included.resetsAt
+    )
+    const fromMs = fromIso ? Date.parse(fromIso) : NaN
+    const untilMs = untilIso ? Date.parse(untilIso) : NaN
+    const periodDurationMs =
+      Number.isFinite(fromMs) && Number.isFinite(untilMs) && untilMs > fromMs
+        ? untilMs - fromMs
+        : MONTH_MS
+    return {
+      usedDollars: used,
+      limitDollars: allowance,
+      resetsAt: untilIso,
+      periodDurationMs: periodDurationMs,
+    }
+  }
+
+  function parsePurchasedCredits(purchased) {
+    if (!purchased || typeof purchased !== "object") return null
+    const balance = readNumber(purchased.balance_usd ?? purchased.balanceUsd)
+    if (balance === null) return null
+    return "$" + Math.max(0, balance).toFixed(2) + " remaining"
+  }
+
   function parseApiUsage(data) {
     const body = data && typeof data.data === "object" ? data.data : data
     if (!body || typeof body !== "object") return null
 
-    const session = findNestedObject(body, ["session", "session_usage", "sessionUsage"])
-    const weekly = findNestedObject(body, ["weekly", "weekly_usage", "weeklyUsage"])
-    const sessionPercent = clampPercent(
-      session
-        ? session.used_percent ?? session.usedPercent ?? session.percent ?? session.percentage
-        : body.session_percent ?? body.sessionPercent
-    )
-    const weeklyPercent = clampPercent(
-      weekly
-        ? weekly.used_percent ?? weekly.usedPercent ?? weekly.percent ?? weekly.percentage
-        : body.weekly_percent ?? body.weeklyPercent
-    )
-    if (sessionPercent === null || weeklyPercent === null) return null
+    const included = body.included && typeof body.included === "object" ? body.included : null
+    const allowance = parseIncludedAllowance(included)
+    const purchasedCredits = parsePurchasedCredits(body.purchased)
+
+    const limits =
+      included ||
+      (body.limits && typeof body.limits === "object" ? body.limits : body)
+    const session = findNestedObject(limits, ["session", "session_usage", "sessionUsage"])
+    const weekly = findNestedObject(limits, ["weekly", "weekly_usage", "weeklyUsage"])
+    const monthly = findNestedObject(limits, ["monthly", "monthly_usage", "monthlyUsage"])
+    const sessionPercent = readWindowPercent(session, body.session_percent ?? body.sessionPercent)
+    const weeklyPercent = readWindowPercent(weekly, body.weekly_percent ?? body.weeklyPercent)
+    const monthlyPercent = monthly ? readWindowPercent(monthly, null) : null
+    const hasLegacyWindows = sessionPercent !== null || weeklyPercent !== null || monthlyPercent !== null
+
+    if (!allowance && !hasLegacyWindows) return null
 
     return {
       plan: readString(body.plan || body.tier || body.subscription),
       sessionPercent: sessionPercent,
       weeklyPercent: weeklyPercent,
+      monthlyPercent: monthlyPercent,
+      monthlyAllowance: allowance,
       sessionResetsAt: session ? session.resets_at || session.resetsAt || null : body.session_resets_at || null,
       weeklyResetsAt: weekly ? weekly.resets_at || weekly.resetsAt || null : body.weekly_resets_at || null,
+      purchasedCredits: purchasedCredits,
       source: "API",
     }
   }
@@ -246,7 +315,7 @@
     const percentages = []
     const re = /(\d+(?:\.\d+)?)%\s*used/gi
     let match
-    while ((match = re.exec(text)) && percentages.length < 2) {
+    while ((match = re.exec(text)) && percentages.length < 3) {
       percentages.push(clampPercent(match[1]))
     }
     if (percentages.length < 2 || percentages[0] === null || percentages[1] === null) return null
@@ -264,6 +333,7 @@
       plan: planMatch ? planMatch[1] : null,
       sessionPercent: percentages[0],
       weeklyPercent: percentages[1],
+      monthlyPercent: percentages.length > 2 ? percentages[2] : null,
       sessionResetsAt: resetValues[0] || relativeResetIso(sessionSection, nowIso),
       weeklyResetsAt: resetValues[1] || relativeResetIso(weeklySection, nowIso),
       source: "settings",
@@ -313,9 +383,10 @@
 
     const apiKey = loadApiKey(ctx)
     if (apiKey) {
-      const apiUsage = parseApiUsage(
-        requestJson(ctx, ACCOUNT_USAGE_URL, { Authorization: "Bearer " + apiKey, Accept: "application/json" })
-      )
+      const headers = { Authorization: "Bearer " + apiKey, Accept: "application/json" }
+      const apiUsage =
+        parseApiUsage(requestJson(ctx, BALANCE_URL, headers)) ||
+        parseApiUsage(requestJson(ctx, ACCOUNT_USAGE_URL, headers))
       if (apiUsage) return buildResult(ctx, apiUsage)
     }
 
@@ -323,31 +394,58 @@
   }
 
   function buildResult(ctx, usage) {
-    const sessionOpts = {
-      label: "Session",
-      used: usage.sessionPercent,
-      limit: 100,
-      format: { kind: "percent" },
-      periodDurationMs: SESSION_MS,
+    const lines = []
+    if (usage.sessionPercent != null) {
+      const sessionOpts = {
+        label: "Session",
+        used: usage.sessionPercent,
+        limit: 100,
+        format: { kind: "percent" },
+        periodDurationMs: SESSION_MS,
+      }
+      if (usage.sessionResetsAt) sessionOpts.resetsAt = usage.sessionResetsAt
+      lines.push(ctx.line.progress(sessionOpts))
     }
-    if (usage.sessionResetsAt) sessionOpts.resetsAt = usage.sessionResetsAt
-
-    const weeklyOpts = {
-      label: "Weekly",
-      used: usage.weeklyPercent,
-      limit: 100,
-      format: { kind: "percent" },
-      periodDurationMs: WEEK_MS,
+    if (usage.weeklyPercent != null) {
+      const weeklyOpts = {
+        label: "Weekly",
+        used: usage.weeklyPercent,
+        limit: 100,
+        format: { kind: "percent" },
+        periodDurationMs: WEEK_MS,
+      }
+      if (usage.weeklyResetsAt) weeklyOpts.resetsAt = usage.weeklyResetsAt
+      lines.push(ctx.line.progress(weeklyOpts))
     }
-    if (usage.weeklyResetsAt) weeklyOpts.resetsAt = usage.weeklyResetsAt
+    if (usage.monthlyAllowance) {
+      const monthlyOpts = {
+        label: "Monthly",
+        used: usage.monthlyAllowance.usedDollars,
+        limit: usage.monthlyAllowance.limitDollars,
+        format: { kind: "dollars" },
+        periodDurationMs: usage.monthlyAllowance.periodDurationMs,
+      }
+      if (usage.monthlyAllowance.resetsAt) {
+        monthlyOpts.resetsAt = usage.monthlyAllowance.resetsAt
+      }
+      lines.push(ctx.line.progress(monthlyOpts))
+    } else if (usage.monthlyPercent != null) {
+      lines.push(ctx.line.progress({
+        label: "Monthly",
+        used: usage.monthlyPercent,
+        limit: 100,
+        format: { kind: "percent" },
+      }))
+    }
 
+    if (usage.purchasedCredits) {
+      lines.push(ctx.line.text({ label: "Purchased Credits", value: usage.purchasedCredits }))
+    }
+
+    lines.push(ctx.line.text({ label: "Source", value: usage.source === "API" ? "Ollama API" : "Settings page" }))
     return {
       plan: formatPlan(usage.plan),
-      lines: [
-        ctx.line.progress(sessionOpts),
-        ctx.line.progress(weeklyOpts),
-        ctx.line.text({ label: "Source", value: usage.source === "API" ? "Ollama API" : "Settings page" }),
-      ],
+      lines,
     }
   }
 

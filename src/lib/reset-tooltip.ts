@@ -36,14 +36,18 @@ export type ResetLineContext = {
 
 export function isFreshSessionWindow(
   nowMs: number,
-  resetsAtIso: string,
+  resetsAtIso: string | null | undefined,
   lineContext?: ResetLineContext,
 ): boolean {
   if (!lineContext || lineContext.used === undefined || lineContext.used > 0) return false
+  // Claude & OpenCode: a reported resetsAt means the 5h window already started (API rounds <1% to 0);
+  // a missing reset date is what signals an unstarted session window.
+  if (lineContext.sessionStartSignal === "missingResetDate") {
+    return !resetsAtIso || parseResetTimestamp(resetsAtIso) === null
+  }
+  if (!resetsAtIso) return false
   const resetsAtMs = parseResetTimestamp(resetsAtIso)
   if (resetsAtMs === null || nowMs >= resetsAtMs) return false
-  // Claude: a reported resetsAt means the 5h window already started (API rounds <1% to 0).
-  if (lineContext.sessionStartSignal === "missingResetDate") return false
   if (lineContext.periodDurationMs === FIVE_HOURS_MS) return true
   if (lineContext.label === "Session") return true
   return false
@@ -65,12 +69,13 @@ function formatMonthDay(timestampMs: number): string {
 
 export function formatResetRelativeLabel(
   nowMs: number,
-  resetsAtIso: string,
+  resetsAtIso: string | null | undefined,
   lineContext?: ResetLineContext,
 ): string | null {
   if (isFreshSessionWindow(nowMs, resetsAtIso, lineContext)) {
     return t("reset.notStarted")
   }
+  if (!resetsAtIso) return null
   const resetsAtMs = parseResetTimestamp(resetsAtIso)
   if (resetsAtMs === null) return null
   const deltaMs = resetsAtMs - nowMs
@@ -81,9 +86,10 @@ export function formatResetRelativeLabel(
 
 export function formatResetAbsoluteLabel(
   nowMs: number,
-  resetsAtIso: string,
+  resetsAtIso: string | null | undefined,
   timeFormatMode: TimeFormatMode = "auto",
 ): string | null {
+  if (!resetsAtIso) return null
   const resetsAtMs = parseResetTimestamp(resetsAtIso)
   if (resetsAtMs === null) return null
   if (resetsAtMs - nowMs <= 0) return t("reset.resetsSoon")
@@ -103,7 +109,7 @@ export function formatResetTooltipText({
   lineContext,
 }: {
   nowMs: number
-  resetsAtIso: string
+  resetsAtIso: string | null | undefined
   visibleMode: ResetTimerDisplayMode
   timeFormatMode?: TimeFormatMode
   lineContext?: ResetLineContext
@@ -111,6 +117,7 @@ export function formatResetTooltipText({
   if (isFreshSessionWindow(nowMs, resetsAtIso, lineContext)) {
     return t("reset.freshSessionTooltip")
   }
+  if (!resetsAtIso) return null
   return visibleMode === "absolute"
     ? formatResetRelativeLabel(nowMs, resetsAtIso)
     : formatResetAbsoluteLabel(nowMs, resetsAtIso, timeFormatMode)

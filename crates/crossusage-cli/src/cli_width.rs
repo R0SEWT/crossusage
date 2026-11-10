@@ -118,7 +118,29 @@ pub fn probe_value_column_wrap_chars(term_w: u16) -> usize {
 /// Word-wrap plain text for stacked `list` / `usage-stats` output.
 pub fn wrap_plain(text: &str, width: usize) -> String {
     let w = width.max(8);
-    textwrap::fill(text, w)
+    let mut out = String::with_capacity(text.len());
+    for (p_idx, para) in text.split('\n').enumerate() {
+        if p_idx > 0 {
+            out.push('\n');
+        }
+        let mut line_len = 0usize;
+        for word in para.split_whitespace() {
+            let w_len = word.chars().count();
+            if line_len == 0 {
+                out.push_str(word);
+                line_len = w_len;
+            } else if line_len + 1 + w_len <= w {
+                out.push(' ');
+                out.push_str(word);
+                line_len += 1 + w_len;
+            } else {
+                out.push('\n');
+                out.push_str(word);
+                line_len = w_len;
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

@@ -126,7 +126,7 @@ describe("ollama plugin", () => {
     const ctx = makeCtx()
     mockEnv(ctx, { OLLAMA_API_KEY: "api-key", OLLAMA_SESSION_COOKIE: "session-value" })
     ctx.host.http.request.mockImplementation((opts) => {
-      if (opts.url.includes("/api/account/usage")) {
+      if (opts.url.includes("/api/balance") || opts.url.includes("/api/account/usage")) {
         throw new Error("API should not be fetched when settings auth exists")
       }
       return { status: 200, bodyText: SETTINGS_HTML }
@@ -144,7 +144,7 @@ describe("ollama plugin", () => {
     const ctx = makeCtx()
     mockEnv(ctx, { OLLAMA_API_KEY: "api-key" })
     ctx.host.http.request.mockImplementation((opts) => {
-      expect(opts.url).toBe("https://ollama.com/api/account/usage")
+      expect(opts.url).toBe("https://ollama.com/api/balance")
       return {
         status: 200,
         bodyText: JSON.stringify({
@@ -161,6 +161,65 @@ describe("ollama plugin", () => {
     expect(result.plan).toBe("Pro")
     expect(result.lines.find((line) => line.label === "Session").used).toBe(3)
     expect(result.lines.find((line) => line.label === "Source").value).toBe("Ollama API")
+  })
+
+  it("reads /api/balance monthly dollar allowance and purchased credits (#1357)", async () => {
+    const ctx = makeCtx()
+    mockEnv(ctx, { OLLAMA_API_KEY: "api-key" })
+    ctx.host.http.request.mockImplementation((opts) => {
+      expect(opts.url).toBe("https://ollama.com/api/balance")
+      return {
+        status: 200,
+        bodyText: JSON.stringify({
+          plan: "pro",
+          included: {
+            balance_usd: 15.6,
+            allowance_usd: 20,
+            period: {
+              from: "2026-07-01T00:00:00Z",
+              until: "2026-08-01T00:00:00Z",
+            },
+          },
+          purchased: {
+            balance_usd: 12.5,
+          },
+        }),
+      }
+    })
+
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+
+    expect(result.plan).toBe("Pro")
+    const monthly = result.lines.find((line) => line.label === "Monthly")
+    expect(monthly.used).toBeCloseTo(4.4, 5)
+    expect(monthly.limit).toBe(20)
+    expect(monthly.format).toEqual({ kind: "dollars" })
+    expect(monthly.resetsAt).toBe("2026-08-01T00:00:00Z")
+    expect(monthly.periodDurationMs).toBe(31 * 24 * 60 * 60 * 1000)
+    const credits = result.lines.find((line) => line.label === "Purchased Credits")
+    expect(credits.value).toBe("$12.50 remaining")
+  })
+
+  it("reads legacy /api/balance remaining_percent windows (#1357)", async () => {
+    const ctx = makeCtx()
+    mockEnv(ctx, { OLLAMA_API_KEY: "api-key" })
+    ctx.host.http.request.mockImplementation(() => ({
+      status: 200,
+      bodyText: JSON.stringify({
+        plan: "pro",
+        included: {
+          session: { remaining_percent: 99.4, resets_at: "2026-05-16T15:00:00Z" },
+          weekly: { remaining_percent: 82.1, resets_at: "2026-05-18T00:00:00Z" },
+        },
+      }),
+    }))
+
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+
+    expect(result.lines.find((line) => line.label === "Session").used).toBeCloseTo(0.6, 5)
+    expect(result.lines.find((line) => line.label === "Weekly").used).toBeCloseTo(17.9, 5)
   })
 
   it("uses Firefox cookie when env and keychain are missing", async () => {

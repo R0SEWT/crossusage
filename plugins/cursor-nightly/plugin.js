@@ -163,6 +163,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
   function writeStateValue(ctx, key, value) {
     try {
       const dbPath = getCursorDbPath(ctx)
+      // Escape single quotes in value for SQL
       const escaped = String(value).replace(/'/g, "''")
       const sql =
         "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('" +
@@ -207,12 +208,59 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
     }
   }
 
+  // Cursor 3.2x+ keeps the desktop app's own tokens encrypted in state.vscdb as
+  // "cursor-safe-storage:v1:<base64>" (Electron safeStorage). That is ciphertext, not a
+  // token: sent to the API it is rejected as "not logged in". `agent login` (Cursor CLI)
+  // writes plaintext tokens to <app data>/Cursor/auth.json instead, so use that.
+  const ENCRYPTED_AUTH_PREFIX = "cursor-safe-storage:"
+  const CLI_AUTH_FILE = "Cursor/auth.json"
+  const ENCRYPTED_AUTH_MESSAGE =
+    "Cursor keeps its sign-in encrypted, which CrossUsage cannot read. Run `agent login` (Cursor CLI), then refresh."
+
+  function isEncryptedAuthValue(value) {
+    return typeof value === "string" && value.trim().indexOf(ENCRYPTED_AUTH_PREFIX) === 0
+  }
+
+  // The Cursor CLI login belongs to the stable app. This file is also bundled as the
+  // Nightly plugin (generated from this one), so Nightly must opt out here.
+  function isNightly(ctx) {
+    return cursorBaseProviderId(ctx) === "cursor-nightly"
+  }
+
+  function encryptedAuthMessage(ctx) {
+    return isNightly(ctx)
+      ? "Cursor Nightly keeps its sign-in encrypted, which CrossUsage cannot read."
+      : ENCRYPTED_AUTH_MESSAGE
+  }
+
+  function readCliAuthFile(ctx) {
+    if (isNightly(ctx)) return null
+    try {
+      if (!ctx.host.fs || typeof ctx.host.fs.firstExistingAppSupport !== "function") return null
+      const path = ctx.host.fs.firstExistingAppSupport(CLI_AUTH_FILE)
+      if (!path) return null
+      const parsed = ctx.util.tryParseJson(ctx.host.fs.readText(path))
+      if (!parsed || typeof parsed !== "object") return null
+      const accessToken = typeof parsed.accessToken === "string" ? parsed.accessToken.trim() : ""
+      const refreshToken = typeof parsed.refreshToken === "string" ? parsed.refreshToken.trim() : ""
+      if (!accessToken && !refreshToken) return null
+      return { accessToken: accessToken || null, refreshToken: refreshToken || null }
+    } catch (e) {
+      ctx.host.log.warn("cursor cli auth file read failed: " + String(e))
+      return null
+    }
+  }
+
   function loadAuthState(ctx) {
     const injected = readInjectedCredential(ctx)
     if (injected) return injected
 
-    const sqliteAccessToken = readStateValue(ctx, "cursorAuth/accessToken")
-    const sqliteRefreshToken = readStateValue(ctx, "cursorAuth/refreshToken")
+    let sqliteAccessToken = readStateValue(ctx, "cursorAuth/accessToken")
+    let sqliteRefreshToken = readStateValue(ctx, "cursorAuth/refreshToken")
+    const encryptedAtRest = isEncryptedAuthValue(sqliteAccessToken) || isEncryptedAuthValue(sqliteRefreshToken)
+    if (isEncryptedAuthValue(sqliteAccessToken)) sqliteAccessToken = null
+    if (isEncryptedAuthValue(sqliteRefreshToken)) sqliteRefreshToken = null
+    if (encryptedAtRest) ctx.host.log.info("state.vscdb auth is encrypted at rest; ignoring it")
     const sqliteMembershipTypeRaw = readStateValue(ctx, "cursorAuth/stripeMembershipType")
     const sqliteMembershipType = typeof sqliteMembershipTypeRaw === "string"
       ? sqliteMembershipTypeRaw.trim().toLowerCase()
@@ -251,10 +299,20 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
       }
     }
 
+    const cliAuth = readCliAuthFile(ctx)
+    if (cliAuth) {
+      return {
+        accessToken: cliAuth.accessToken,
+        refreshToken: cliAuth.refreshToken,
+        source: "cli-file",
+      }
+    }
+
     return {
       accessToken: null,
       refreshToken: null,
       source: null,
+      encryptedAtRest: encryptedAtRest,
     }
   }
 
@@ -290,6 +348,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
 
   function buildCrossusageDevMockProbeOutput(ctx) {
     ctx.host.log.info("crossusage dev mock: skipping Cursor API (no network)")
+    // Labels must match plugin.json manifest lines so tray + overview filters never go empty.
     return {
       plan: "Dev mock",
       lines: [
@@ -368,6 +427,10 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
     if (source === "keychain") {
       return writeKeychainValue(ctx, KEYCHAIN_ACCESS_TOKEN_SERVICE, accessToken)
     }
+    if (source === "cli-file") {
+      // The CLI owns this file; keep a refreshed token in memory only.
+      return false
+    }
     return writeStateValue(ctx, "cursorAuth/accessToken", accessToken)
   }
 
@@ -429,6 +492,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
         return null
       }
 
+      // Check if server wants us to logout
       if (body.shouldLogout === true) {
         ctx.host.log.error("refresh response indicates shouldLogout=true")
         throw "Session expired. " + LOGIN_HINT
@@ -440,9 +504,12 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
         return null
       }
 
+      // Persist updated access token to source where auth was loaded from.
       persistAccessToken(ctx, source, newAccessToken)
       ctx.host.log.info("refresh succeeded, token persisted")
 
+      // Note: Cursor refresh returns access_token which is used as both
+      // access and refresh token in some flows
       return newAccessToken
     } catch (e) {
       if (typeof e === "string") throw e
@@ -637,6 +704,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
     if (!stripe) return null
     var customerBalanceCents = Number(stripe.customerBalance)
     if (!Number.isFinite(customerBalanceCents)) return null
+    // Stripe stores customer credits as a negative balance.
     return customerBalanceCents < 0 ? Math.abs(customerBalanceCents) : 0
   }
 
@@ -683,11 +751,26 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
     const hasPlanUsageLimit = hasPlanUsage && Number.isFinite(limitN)
     const planUsageLimitMissing = hasPlanUsage && !hasPlanUsageLimit
     const hasTotalUsagePercent = hasPlanUsage && Number.isFinite(pctN)
+    const autoN = hasPlanUsage ? readFiniteNumber(pu.autoPercentUsed) : NaN
+    const apiN = hasPlanUsage ? readFiniteNumber(pu.apiPercentUsed) : NaN
+    const totalSpendN = hasPlanUsage ? readFiniteNumber(pu.totalSpend) : NaN
+    const remainingN = hasPlanUsage ? readFiniteNumber(pu.remaining) : NaN
+    const defaultLimit = Number.isFinite(limitN) ? limitN : 0
+    const spent = Number.isFinite(totalSpendN)
+      ? totalSpendN
+      : (defaultLimit - (Number.isFinite(remainingN) ? remainingN : defaultLimit))
+    const hasModelPools =
+      Number.isFinite(autoN) &&
+      Number.isFinite(apiN) &&
+      autoN >= 0 &&
+      apiN >= 0 &&
+      (autoN > 0 || apiN > 0 || spent === 0)
     return {
       hasPlanUsage: hasPlanUsage,
       hasPlanUsageLimit: hasPlanUsageLimit,
       planUsageLimitMissing: planUsageLimitMissing,
       hasTotalUsagePercent: hasTotalUsagePercent,
+      hasModelPools: hasModelPools,
       pu: pu,
     }
   }
@@ -708,15 +791,16 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
     }
 
     const normalizedPlanName = typeof planName === "string"
-      ? planName.toLowerCase()
+      ? planName.trim().toLowerCase()
       : ""
 
     const flags = getConnectUsageMetricFlags(usage)
     const hasPlanUsageLimit = flags.hasPlanUsageLimit
     const hasTotalUsagePercent = flags.hasTotalUsagePercent
+    const hasModelPools = flags.hasModelPools
     const pu = flags.pu
 
-    if (!hasPlanUsageLimit && !hasTotalUsagePercent) {
+    if (!hasPlanUsageLimit && !hasTotalUsagePercent && !hasModelPools) {
       throw "Total usage limit missing from API response."
     }
 
@@ -774,7 +858,20 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
       (su && typeof su.pooledLimit === "number" && su.pooledLimit > 0)
     )
 
-    if (isTeamAccount) {
+    if (isTeamAccount && hasModelPools) {
+      // Modern Teams seats still report the old $20 allowance. Structured pool data wins;
+      // never synthesize a total from stale dollars when Cursor omits totalPercentUsed.
+      if (hasTotalUsagePercent) {
+        lines.push(ctx.line.progress({
+          label: "Total usage",
+          used: pu.totalPercentUsed,
+          limit: 100,
+          format: { kind: "percent" },
+          resetsAt: ctx.util.toIso(usage.billingCycleEnd),
+          periodDurationMs: billingPeriodMs,
+        }))
+      }
+    } else if (isTeamAccount) {
       if (!hasPlanUsageLimit) {
         return null
       }
@@ -786,6 +883,8 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
         resetsAt: ctx.util.toIso(usage.billingCycleEnd),
         periodDurationMs: billingPeriodMs,
       }))
+      // Dollar total usage from Connect is authoritative for team plans; still mark
+      // locally-derived bonus/export spend as estimated below.
 
       if (typeof pu.bonusSpend === "number" && pu.bonusSpend > 0) {
         lines.push(ctx.line.text({
@@ -1297,6 +1396,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
         source: "cursor_transcripts",
         daily: daily,
       })
+    } catch (e) { /* ignore */ }
   }
 
   function formatCompactTokens(n) {
@@ -1304,6 +1404,21 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
     if (num >= 1000000) return (num / 1000000).toFixed(1) + "M tokens"
     if (num >= 1000) return (num / 1000).toFixed(1) + "K tokens"
     return String(num) + " tokens"
+  }
+
+  // `queryDaily` / `queryMtd` report where their dollars came from:
+  //   "csv"    - Cursor's billing export; costUsd is what Cursor actually charged.
+  //   "events" - per-event token counts priced locally from a price table. That is
+  //              a list-price estimate, and it is non-zero even for usage the plan
+  //              already covers.
+  // Hosts that predate the field send nothing; then we claim neither.
+  var CURSOR_BILLED_SUBTITLE = "On-demand usage billed by Cursor"
+  var CURSOR_ESTIMATE_SUBTITLE = "Estimated at API rates · not billed"
+
+  function cursorSpendFraming(source, hasCost) {
+    if (source === "events") return { prefix: "≈", subtitle: CURSOR_ESTIMATE_SUBTITLE }
+    if (source === "csv") return { prefix: "", subtitle: hasCost ? CURSOR_BILLED_SUBTITLE : null }
+    return { prefix: "", subtitle: hasCost ? "From Cursor usage export" : null }
   }
 
   function attachCursorMtdUsage(ctx, result) {
@@ -1323,28 +1438,27 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
       var total = d.totalTokens != null ? d.totalTokens : inputTok + outputTok
       var value = formatCompactTokens(total)
       var hasCost = d.costUsd != null && Number(d.costUsd) > 0
+      var framing = cursorSpendFraming(d.source, hasCost)
       if (inputTok > 0 || outputTok > 0) {
         value = formatCompactTokens(inputTok) + " in · " + formatCompactTokens(outputTok) + " out"
-        if (hasCost) value += " · $" + Number(d.costUsd).toFixed(2)
+        if (hasCost) value += " · " + framing.prefix + "$" + Number(d.costUsd).toFixed(2)
       } else if (hasCost) {
-        value += " · $" + Number(d.costUsd).toFixed(2)
+        value += " · " + framing.prefix + "$" + Number(d.costUsd).toFixed(2)
       }
       result.lines.push(ctx.line.text({
         label: "MTD usage",
         value: value,
-        subtitle: hasCost
-          ? "Estimated spend from Cursor usage export"
-          : "From Cursor dashboard export (billing data)",
+        subtitle: framing.subtitle || "From Cursor dashboard export (billing data)",
       }))
     } catch (e) {
+      // Never drop primary Connect usage when export enrichment fails (#948).
       ctx.host.log.warn("usage export MTD attach failed: " + String(e))
     }
     return result
   }
 
   function persistCursorBillingDaily(ctx, displayName) {
-    if (!ctx.host.cursorUsageExport || typeof ctx.host.cursorUsageExport.queryDaily !== "function") return
-    if (!ctx.host.usageDaily || typeof ctx.host.usageDaily.ingest !== "function") return
+    if (!ctx.host.cursorUsageExport || typeof ctx.host.cursorUsageExport.queryDaily !== "function") return null
     try {
       var resp = ctx.host.cursorUsageExport.queryDaily({
         since: cursorSince31DaysAgo(),
@@ -1354,9 +1468,9 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
         if (resp && resp.status && resp.status !== "ok") {
           ctx.host.log.warn("usage export daily query failed: status=" + String(resp.status))
         }
-        return
+        return null
       }
-      if (!resp.data.daily.length) return
+      if (!resp.data.daily.length) return null
       var daily = resp.data.daily.map(function (row) {
         return {
           date: row.date,
@@ -1366,14 +1480,88 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
           costUsd: row.costUsd,
         }
       })
-      ctx.host.usageDaily.ingest({
-        displayName: displayName,
-        source: "cursor_billing",
-        daily: daily,
-      })
+      if (ctx.host.usageDaily && typeof ctx.host.usageDaily.ingest === "function") {
+        ctx.host.usageDaily.ingest({
+          displayName: displayName,
+          source: "cursor_billing",
+          daily: daily,
+        })
+      }
+      return { daily: daily, source: resp.data.source || null }
     } catch (e) {
+      // Log only — never clear primary Connect usage (#948).
       ctx.host.log.warn("cursor billing daily ingest failed: " + String(e))
+      return null
     }
+  }
+
+  // The Total Spend card aggregates lines labelled Today / Yesterday / Last 30
+  // Days. Claude and Codex emit them from local session logs; Cursor has no
+  // such logs, but the billing export already gives us a per-day series — the
+  // same one that feeds the activity chart. Surface it in the shape the card
+  // expects instead of only as a month-to-date lump sum.
+  function cursorDayKey(value) {
+    if (value === null || value === undefined) return ""
+    var digits = String(value).replace(/[^0-9]/g, "")
+    return digits.length >= 8 ? digits.slice(0, 8) : digits
+  }
+
+  function cursorYesterdayYyyymmdd() {
+    var d = new Date()
+    d.setDate(d.getDate() - 1)
+    return cursorYyyymmdd(d)
+  }
+
+  function cursorSpendLabel(cost, prefix) {
+    return (prefix || "") + "$" + (Number(cost) || 0).toFixed(2)
+  }
+
+  // Cost only, deliberately: queryDaily's inputTokens folds cache reads into
+  // the input count (120M in / 0.5M out on a single day), while queryMtd
+  // reports them excluded. Printing tokens here would contradict the MTD line
+  // by ~30x. On the billing-CSV path the cost figures do reconcile — summing
+  // costUsd over Aug 1-16 reproduced the MTD total exactly.
+  function pushCursorDailyCostLines(lines, ctx, daily, source) {
+    if (!Array.isArray(lines) || !Array.isArray(daily) || !daily.length) return
+
+    var byDate = {}
+    var overallCost = 0
+    var hasCost = false
+    for (var i = 0; i < daily.length; i += 1) {
+      var row = daily[i]
+      if (!row) continue
+      var cost = Number(row.costUsd)
+      if (!Number.isFinite(cost)) cost = 0
+      if (cost > 0) hasCost = true
+
+      var key = cursorDayKey(row.date)
+      // The export may split a date across models — accumulate, don't replace.
+      if (key) byDate[key] = (byDate[key] || 0) + cost
+      overallCost += cost
+    }
+
+    // On the billing-CSV path these are real charges: costUsd drops to $0.00 once
+    // usage is covered by the included allowance (checked against the on-demand
+    // invoices for the Jul 10 - Aug 10 cycle). On the events path they are a
+    // price-table estimate, so the framing says so.
+    var framing = cursorSpendFraming(source, hasCost)
+    var days = [
+      { label: "Today", cost: byDate[cursorYyyymmdd(new Date())] },
+      { label: "Yesterday", cost: byDate[cursorYesterdayYyyymmdd()] },
+    ]
+    for (var d = 0; d < days.length; d += 1) {
+      lines.push(ctx.line.text({
+        label: days[d].label,
+        value: cursorSpendLabel(days[d].cost, framing.prefix),
+        subtitle: framing.subtitle,
+      }))
+    }
+
+    lines.push(ctx.line.text({
+      label: "Last 30 Days",
+      value: cursorSpendLabel(overallCost, framing.prefix),
+      subtitle: framing.subtitle,
+    }))
   }
 
   function attachCursorTranscriptActivity(ctx, result) {
@@ -1388,7 +1576,10 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
 
   function attachCursorBillingDaily(ctx, result) {
     if (!result) return result
-    persistCursorBillingDaily(ctx, cursorAccountDisplayName(ctx))
+    var billing = persistCursorBillingDaily(ctx, cursorAccountDisplayName(ctx))
+    if (billing && Array.isArray(result.lines)) {
+      pushCursorDailyCostLines(result.lines, ctx, billing.daily, billing.source)
+    }
     return result
   }
 
@@ -1489,7 +1680,8 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
     }
 
     if (!accessToken && !refreshTokenValue) {
-      ctx.host.log.error("probe failed: no access or refresh token in sqlite/keychain")
+      ctx.host.log.error("probe failed: no access or refresh token in sqlite/keychain/cli file")
+      if (authState.encryptedAtRest) throw encryptedAuthMessage(ctx)
       throw "Not logged in. " + LOGIN_HINT
     }
 
@@ -1497,12 +1689,14 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
 
     const nowMs = Date.now()
 
+    // Proactively refresh if token is expired or about to expire
     if (needsRefresh(ctx, accessToken, nowMs)) {
       ctx.host.log.info("token needs refresh (expired or expiring soon)")
       let refreshed = null
       try {
         refreshed = refreshToken(ctx, refreshTokenValue, authSource)
       } catch (e) {
+        // If refresh fails but we have an access token, try it anyway
         ctx.host.log.warn("refresh failed but have access token, will try: " + String(e))
         if (!accessToken) throw e
       }
@@ -1561,6 +1755,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
       )
 
       var connectDetail = null
+      // Connect/gRPC-Web sometimes returns 400/403 while other endpoints or cursor.com still work.
       if (usageResp.status === 400 || usageResp.status === 403) {
         connectDetail = extractConnectUsageErrorDetail(ctx, usageResp.bodyText)
         ctx.host.log.warn(
@@ -1644,6 +1839,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
       throw "Usage response invalid. Try again later."
     }
 
+    // Fetch plan info early (needed for request-based fallback detection)
     let planName = ""
     let planInfoUnavailable = false
     try {
@@ -1665,19 +1861,20 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
     }
 
     const normalizedPlanName = typeof planName === "string"
-      ? planName.toLowerCase()
+      ? planName.trim().toLowerCase()
       : ""
 
-    const hasPlanUsage = !!usage.planUsage
-    const hasPlanUsageLimit = hasPlanUsage &&
-      typeof usage.planUsage.limit === "number" &&
-      Number.isFinite(usage.planUsage.limit)
-    const planUsageLimitMissing = hasPlanUsage && !hasPlanUsageLimit
-    const hasTotalUsagePercent = hasPlanUsage &&
-      typeof usage.planUsage.totalPercentUsed === "number" &&
-      Number.isFinite(usage.planUsage.totalPercentUsed)
+    const probeFlags = getConnectUsageMetricFlags(usage)
+    const hasPlanUsage = probeFlags.hasPlanUsage
+    const hasPlanUsageLimit = probeFlags.hasPlanUsageLimit
+    const planUsageLimitMissing = probeFlags.planUsageLimitMissing
+    const hasTotalUsagePercent = probeFlags.hasTotalUsagePercent
+    const hasModelPools = probeFlags.hasModelPools
+    const planUsageUnusable = !hasPlanUsage || (planUsageLimitMissing && !hasModelPools)
 
-    const needsRequestBasedFallback = usage.enabled !== false && (!hasPlanUsage || planUsageLimitMissing) && (
+    // Enterprise and some Team request-based accounts can return no planUsage
+    // or a planUsage object without limit from the Connect API.
+    const needsRequestBasedFallback = usage.enabled !== false && planUsageUnusable && (
       normalizedPlanName === "enterprise" ||
       normalizedPlanName === "team"
     )
@@ -1691,7 +1888,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
     }
 
     const needsFallbackWithoutPlanInfo = usage.enabled !== false &&
-      (!hasPlanUsage || planUsageLimitMissing) &&
+      planUsageUnusable &&
       !hasTotalUsagePercent &&
       !normalizedPlanName &&
       planInfoUnavailable
@@ -1700,7 +1897,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
       return buildUnknownRequestBasedResult(ctx, accessToken, planName)
     }
 
-    if (usage.enabled !== false && planUsageLimitMissing && !hasTotalUsagePercent) {
+    if (usage.enabled !== false && planUsageLimitMissing && !hasTotalUsagePercent && !hasModelPools) {
       ctx.host.log.warn("planUsage.limit missing, attempting REST usage API fallback")
       try {
         return buildUnknownRequestBasedResult(ctx, accessToken, planName)
@@ -1709,6 +1906,7 @@ globalThis.__OPENUSAGE_PLUGIN_REGISTRATION_ID__ = "cursor-nightly";
       }
     }
 
+    // Team plans may omit `enabled` even with valid plan usage data.
     if (usage.enabled === false || !usage.planUsage) {
       throw "No active Cursor subscription."
     }

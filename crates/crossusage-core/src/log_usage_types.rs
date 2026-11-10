@@ -156,33 +156,16 @@ mod tests {
     #[test]
     fn day_key_uses_offset_calendar_not_utc() {
         // 2026-08-29 03:00:00 UTC = 2026-08-28 20:00 PDT (west of UTC, evening).
-        let west = time::OffsetDateTime::from_unix_timestamp(1_787_972_400).unwrap();
-        assert_eq!(
-            format!(
-                "{:04}-{:02}-{:02}",
-                west.year(),
-                u8::from(west.month()),
-                west.day()
-            ),
-            "2026-08-29"
-        );
-        let pacific = time::UtcOffset::from_hms(-7, 0, 0).unwrap();
+        let west = chrono::DateTime::<chrono::Utc>::from_timestamp(1_787_972_400, 0).unwrap();
+        assert_eq!(west.format("%Y-%m-%d").to_string(), "2026-08-29");
+        let pacific = chrono::FixedOffset::west_opt(7 * 3600).unwrap();
         assert_eq!(day_key_at_offset(&west, pacific), "2026-08-28");
         // 2026-08-28 16:00:00 UTC = 2026-08-29 01:00 JST (east of UTC, morning).
-        let east = time::OffsetDateTime::from_unix_timestamp(1_787_932_800).unwrap();
-        assert_eq!(
-            format!(
-                "{:04}-{:02}-{:02}",
-                east.year(),
-                u8::from(east.month()),
-                east.day()
-            ),
-            "2026-08-28"
-        );
-        let tokyo = time::UtcOffset::from_hms(9, 0, 0).unwrap();
+        let east = chrono::DateTime::<chrono::Utc>::from_timestamp(1_787_932_800, 0).unwrap();
+        assert_eq!(east.format("%Y-%m-%d").to_string(), "2026-08-28");
+        let tokyo = chrono::FixedOffset::east_opt(9 * 3600).unwrap();
         assert_eq!(day_key_at_offset(&east, tokyo), "2026-08-29");
-        let expected = chrono::DateTime::<chrono::Utc>::from_timestamp(west.unix_timestamp(), 0)
-            .unwrap()
+        let expected = west
             .with_timezone(&chrono::Local)
             .format("%Y-%m-%d")
             .to_string();
@@ -245,30 +228,18 @@ pub enum LogScanStatus {
 
 /// Calendar date in `offset` (`YYYY-MM-DD`). Unix/`Z` timestamps are UTC; plugins
 /// match Today/Yesterday with local `Date` keys, so callers pass the machine offset.
-fn day_key_at_offset(dt: &time::OffsetDateTime, offset: time::UtcOffset) -> String {
-    let local = dt.to_offset(offset);
-    format!(
-        "{:04}-{:02}-{:02}",
-        local.year(),
-        u8::from(local.month()),
-        local.day()
-    )
+#[cfg(test)]
+fn day_key_at_offset(dt: &chrono::DateTime<chrono::Utc>, offset: chrono::FixedOffset) -> String {
+    dt.with_timezone(&offset).format("%Y-%m-%d").to_string()
 }
 
-pub fn local_day_key_from_offset(dt: &time::OffsetDateTime) -> String {
-    let offset_secs = chrono::DateTime::<chrono::Utc>::from_timestamp(dt.unix_timestamp(), 0)
-        .map(|utc| utc.with_timezone(&chrono::Local).offset().local_minus_utc())
-        .unwrap_or(0);
-    let offset = time::UtcOffset::from_whole_seconds(offset_secs).unwrap_or(time::UtcOffset::UTC);
-    day_key_at_offset(dt, offset)
+pub fn local_day_key_from_offset(dt: &chrono::DateTime<chrono::Utc>) -> String {
+    dt.with_timezone(&chrono::Local).format("%Y-%m-%d").to_string()
 }
 
-pub fn since_local_midnight(days_back: i32) -> time::OffsetDateTime {
-    let now = time::OffsetDateTime::now_utc();
-    let date = now.date() - time::Duration::days(days_back as i64);
-    date.with_hms(0, 0, 0)
-        .expect("midnight")
-        .assume_utc()
+pub fn since_local_midnight(days_back: i32) -> chrono::DateTime<chrono::Utc> {
+    let date = chrono::Utc::now().date_naive() - chrono::Duration::days(days_back as i64);
+    date.and_hms_opt(0, 0, 0).expect("midnight").and_utc()
 }
 
 pub fn expand_tilde(path: &str) -> std::path::PathBuf {
